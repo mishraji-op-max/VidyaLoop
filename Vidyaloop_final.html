@@ -1,0 +1,2615 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VidyaLoop — Learn. Teach. Earn. Repeat.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<!-- ===== SUPABASE (real backend) ===== -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<style>
+:root[data-theme="dark"]{
+  --bg:#0A0D14; --bg2:#0D1119; --surface:#131826; --surface2:#1A2032; --surface3:#212842;
+  --text:#E9ECF5; --muted:#8B93AA; --muted2:#5E6579; --border:#232B41; --border2:#2E3752;
+  --violet:#8B5CF6; --violet2:#A78BFA; --cyan:#22D3EE; --pink:#FF3EA5; --amber:#FFB020; --green:#34D399; --red:#FB7185;
+  --shadow: 0 10px 40px rgba(0,0,0,.45);
+  --glass: rgba(19,24,38,.72);
+}
+:root[data-theme="light"]{
+  --bg:#F2F4FA; --bg2:#EAEDF6; --surface:#FFFFFF; --surface2:#F5F7FC; --surface3:#ECEFFA;
+  --text:#151826; --muted:#5B6178; --muted2:#8A90A6; --border:#DEE2F0; --border2:#CBD1E8;
+  --violet:#7C3AED; --violet2:#6D28D9; --cyan:#0891B2; --pink:#DB2777; --amber:#B45309; --green:#047857; --red:#DC2626;
+  --shadow: 0 10px 34px rgba(30,40,80,.10);
+  --glass: rgba(255,255,255,.75);
+}
+*{box-sizing:border-box; margin:0; padding:0;}
+html,body{height:100%;}
+body{
+  background:var(--bg); color:var(--text);
+  font-family:'Inter',sans-serif;
+  -webkit-font-smoothing:antialiased;
+  min-height:100vh;
+  position:relative;
+  overflow-x:hidden;
+  transition:background .3s ease, color .3s ease;
+}
+h1,h2,h3,h4,.display{font-family:'Space Grotesk',sans-serif; letter-spacing:-0.02em;}
+.mono{font-family:'JetBrains Mono',monospace;}
+a{color:inherit; text-decoration:none;}
+button{font-family:inherit; cursor:pointer;}
+::selection{background:var(--violet); color:#fff;}
+
+/* ---------- Neon background ---------- */
+#neonbg{position:fixed; inset:0; z-index:0; overflow:hidden; pointer-events:none;}
+.blob{position:absolute; border-radius:50%; filter:blur(90px); opacity:.35; mix-blend-mode:screen;}
+:root[data-theme="light"] .blob{opacity:.22; mix-blend-mode:normal; filter:blur(110px);}
+.blob1{width:520px; height:520px; background:var(--violet); top:-160px; left:-120px; animation:float1 22s ease-in-out infinite;}
+.blob2{width:460px; height:460px; background:var(--cyan); bottom:-140px; right:-100px; animation:float2 26s ease-in-out infinite;}
+.blob3{width:380px; height:380px; background:var(--pink); top:40%; left:60%; animation:float3 30s ease-in-out infinite;}
+@keyframes float1{0%,100%{transform:translate(0,0)}50%{transform:translate(60px,80px)}}
+@keyframes float2{0%,100%{transform:translate(0,0)}50%{transform:translate(-70px,-50px)}}
+@keyframes float3{0%,100%{transform:translate(0,0)}50%{transform:translate(-90px,60px)}}
+.gridlines{position:absolute; inset:0; background-image:
+  linear-gradient(var(--border) 1px, transparent 1px),
+  linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size:64px 64px; opacity:.35; mask-image:radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);}
+:root[data-theme="light"] .gridlines{opacity:.5;}
+.loopsvg{position:absolute; opacity:.14;}
+:root[data-theme="light"] .loopsvg{opacity:.09;}
+.loopsvg.a{top:8%; right:6%; width:260px;}
+.loopsvg.b{bottom:6%; left:4%; width:200px;}
+
+/* ---------- Layout ---------- */
+#app{position:relative; z-index:1; min-height:100vh; display:flex; flex-direction:column;}
+.wrap{max-width:1180px; margin:0 auto; padding:0 24px; width:100%;}
+
+/* Navbar */
+.navbar{position:sticky; top:0; z-index:50; backdrop-filter:blur(14px); background:var(--glass); border-bottom:1px solid var(--border);}
+.navinner{display:flex; align-items:center; gap:18px; padding:14px 24px; max-width:1180px; margin:0 auto;}
+.brand{display:flex; align-items:center; gap:10px; font-weight:700; font-size:19px; cursor:pointer; flex-shrink:0;}
+.brand .ring{width:30px; height:30px;}
+.navlinks{display:flex; gap:4px; flex:1; overflow-x:auto;}
+.navlinks button{background:none; border:none; color:var(--muted); padding:8px 12px; border-radius:8px; font-size:14px; font-weight:500; white-space:nowrap; transition:all .15s;}
+.navlinks button:hover{color:var(--text); background:var(--surface2);}
+.navlinks button.active{color:var(--text); background:var(--surface3); box-shadow:inset 0 0 0 1px var(--border2);}
+.navright{display:flex; align-items:center; gap:10px; flex-shrink:0;}
+.searchbox{display:flex; align-items:center; gap:6px; background:var(--surface2); border:1px solid var(--border); border-radius:20px; padding:6px 12px; width:180px;}
+.searchbox input{background:none; border:none; outline:none; color:var(--text); font-size:13px; width:100%;}
+.iconbtn{width:36px; height:36px; border-radius:10px; border:1px solid var(--border); background:var(--surface2); color:var(--text); display:flex; align-items:center; justify-content:center; position:relative; font-size:15px;}
+.iconbtn:hover{border-color:var(--border2);}
+.badgeDot{position:absolute; top:-4px; right:-4px; background:var(--pink); color:#fff; font-size:10px; font-weight:700; width:16px; height:16px; border-radius:50%; display:flex; align-items:center; justify-content:center;}
+.avatar{width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:13px; color:#fff; flex-shrink:0;}
+.stat-pill{display:flex; align-items:center; gap:6px; background:var(--surface2); border:1px solid var(--border); padding:5px 10px; border-radius:20px; font-size:12.5px; font-weight:600;}
+
+/* Notification dropdown */
+.dropdown{position:absolute; top:52px; right:0; width:320px; background:var(--surface); border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow); z-index:80; max-height:400px; overflow:auto; display:none;}
+.dropdown.open{display:block;}
+.dropdown-item{padding:12px 16px; border-bottom:1px solid var(--border); font-size:13px;}
+.dropdown-item:last-child{border-bottom:none;}
+.dropdown-item .t{font-weight:600; margin-bottom:2px;}
+.dropdown-item .d{color:var(--muted); font-size:12px;}
+
+/* Cards / generic */
+.card{background:var(--surface); border:1px solid var(--border); border-radius:16px; padding:20px;}
+.card-hover{transition:transform .18s ease, box-shadow .18s ease, border-color .18s;}
+.card-hover:hover{transform:translateY(-3px); box-shadow:var(--shadow); border-color:var(--border2);}
+.grid{display:grid; gap:18px;}
+.grid.cols-3{grid-template-columns:repeat(3,1fr);}
+.grid.cols-2{grid-template-columns:repeat(2,1fr);}
+.grid.cols-4{grid-template-columns:repeat(4,1fr);}
+@media(max-width:900px){.grid.cols-3,.grid.cols-4{grid-template-columns:repeat(2,1fr);}}
+@media(max-width:640px){.grid.cols-2,.grid.cols-3,.grid.cols-4{grid-template-columns:1fr;} .navlinks{display:none;} .searchbox{display:none;}}
+
+.btn{display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:11px 20px; border-radius:11px; font-weight:600; font-size:14px; border:1px solid transparent; transition:all .15s;}
+.btn-primary{background:linear-gradient(135deg,var(--violet),var(--pink)); color:#fff; box-shadow:0 6px 20px -6px rgba(139,92,246,.6);}
+.btn-primary:hover{filter:brightness(1.08); transform:translateY(-1px);}
+.btn-outline{background:var(--surface2); border-color:var(--border); color:var(--text);}
+.btn-outline:hover{border-color:var(--border2);}
+.btn-ghost{background:none; color:var(--muted);}
+.btn-ghost:hover{color:var(--text);}
+.btn-sm{padding:7px 13px; font-size:12.5px; border-radius:8px;}
+.btn:disabled{opacity:.45; cursor:not-allowed; transform:none !important;}
+.btn-danger{background:rgba(251,113,133,.12); color:var(--red); border-color:rgba(251,113,133,.3);}
+.btn-block{width:100%;}
+
+input,textarea,select{width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:11px 13px; color:var(--text); font-size:14px; font-family:inherit; outline:none; transition:border-color .15s;}
+input:focus,textarea:focus,select:focus{border-color:var(--violet);}
+label{font-size:12.5px; font-weight:600; color:var(--muted); margin-bottom:6px; display:block;}
+.field{margin-bottom:14px;}
+.formrow{display:grid; grid-template-columns:1fr 1fr; gap:12px;}
+@media(max-width:640px){.formrow{grid-template-columns:1fr;}}
+
+.tag{display:inline-flex; align-items:center; padding:3px 9px; border-radius:20px; font-size:11px; font-weight:700; letter-spacing:.02em;}
+.tag-violet{background:rgba(139,92,246,.15); color:var(--violet2);}
+.tag-cyan{background:rgba(34,211,238,.15); color:var(--cyan);}
+.tag-green{background:rgba(52,211,153,.15); color:var(--green);}
+.tag-amber{background:rgba(255,176,32,.15); color:var(--amber);}
+.tag-pink{background:rgba(255,62,165,.15); color:var(--pink);}
+.tag-muted{background:var(--surface3); color:var(--muted);}
+
+.pagewrap{padding:32px 0 80px;}
+.section-title{display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;}
+.section-title h2{font-size:20px;}
+.eyebrow{font-size:12px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; color:var(--violet2); margin-bottom:8px;}
+.muted{color:var(--muted);}
+.small{font-size:12.5px;}
+hr.div{border:none; border-top:1px solid var(--border); margin:20px 0;}
+
+/* progress bars */
+.bar{height:8px; background:var(--surface3); border-radius:6px; overflow:hidden;}
+.bar > div{height:100%; border-radius:6px; background:linear-gradient(90deg,var(--violet),var(--cyan));}
+
+/* Landing */
+.hero{padding:90px 0 60px; text-align:center; position:relative;}
+.hero h1{font-size:56px; line-height:1.05; max-width:820px; margin:0 auto 18px;}
+.hero .grad{background:linear-gradient(135deg,var(--violet),var(--pink),var(--cyan)); -webkit-background-clip:text; background-clip:text; color:transparent;}
+.hero p{font-size:17px; color:var(--muted); max-width:560px; margin:0 auto 30px;}
+@media(max-width:640px){.hero h1{font-size:36px;}}
+.loopdiagram{display:flex; align-items:center; justify-content:center; gap:0; flex-wrap:wrap; margin:60px auto 0; max-width:900px;}
+.loopnode{display:flex; flex-direction:column; align-items:center; gap:8px; width:120px;}
+.loopnode .dot{width:52px; height:52px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:20px; border:1px solid var(--border2); background:var(--surface);}
+.loopnode span{font-size:12px; font-weight:700; color:var(--muted); text-align:center;}
+.loopchevron{color:var(--muted2); font-size:18px; margin:0 -6px;}
+@media(max-width:900px){.loopchevron{display:none;}}
+
+/* Auth */
+.authwrap{min-height:calc(100vh - 70px); display:flex; align-items:center; justify-content:center; padding:40px 20px;}
+.authcard{width:100%; max-width:420px; padding:34px;}
+
+/* Dashboard stat cards */
+.statbig{display:flex; align-items:center; gap:14px;}
+.statbig .ic{width:46px; height:46px; border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:20px; flex-shrink:0;}
+.statbig .n{font-size:24px; font-weight:700; font-family:'JetBrains Mono',monospace;}
+.statbig .l{font-size:12px; color:var(--muted);}
+
+.quickgrid{display:grid; grid-template-columns:repeat(6,1fr); gap:12px;}
+@media(max-width:900px){.quickgrid{grid-template-columns:repeat(3,1fr);}}
+@media(max-width:500px){.quickgrid{grid-template-columns:repeat(2,1fr);}}
+.qbtn{display:flex; flex-direction:column; align-items:center; gap:8px; padding:16px 8px; border-radius:14px; text-align:center; font-size:12px; font-weight:600;}
+.qbtn .ic{font-size:22px;}
+
+/* Resource card */
+.rescard{display:flex; flex-direction:column; gap:10px; cursor:pointer;}
+.rescard .thumb{height:100px; border-radius:10px; background:linear-gradient(135deg,var(--surface3),var(--surface2)); display:flex; align-items:center; justify-content:center; font-size:28px; position:relative; overflow:hidden;}
+.rescard .thumb::after{content:""; position:absolute; inset:0; background:linear-gradient(135deg, rgba(139,92,246,.18), transparent 60%);}
+.rescard h4{font-size:14.5px; line-height:1.3;}
+.rescard .meta{display:flex; gap:6px; flex-wrap:wrap;}
+.rescard .foot{display:flex; align-items:center; justify-content:space-between; margin-top:auto; padding-top:8px; border-top:1px solid var(--border);}
+.score{font-family:'JetBrains Mono',monospace; font-weight:700;}
+.stars{color:var(--amber); font-size:12.5px;}
+
+/* Filters bar */
+.filterbar{display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px;}
+.filterbar select, .filterbar input{width:auto; min-width:120px;}
+
+/* Resource detail */
+.rdgrid{display:grid; grid-template-columns:1.6fr 1fr; gap:24px; align-items:start;}
+@media(max-width:900px){.rdgrid{grid-template-columns:1fr;}}
+.previewpage{aspect-ratio:3/4; background:var(--surface2); border:1px dashed var(--border2); border-radius:10px; display:flex; align-items:center; justify-content:center; flex-direction:column; gap:6px; color:var(--muted); font-size:12px;}
+.prevgrid{display:grid; grid-template-columns:repeat(4,1fr); gap:10px;}
+@media(max-width:640px){.prevgrid{grid-template-columns:repeat(2,1fr);}}
+.proscons{display:grid; grid-template-columns:1fr 1fr; gap:14px;}
+@media(max-width:640px){.proscons{grid-template-columns:1fr;}}
+.proscons ul{list-style:none; display:flex; flex-direction:column; gap:6px; font-size:13px;}
+.proscons li{padding-left:18px; position:relative;}
+.pros li::before{content:"+"; position:absolute; left:0; color:var(--green); font-weight:700;}
+.cons li::before{content:"–"; position:absolute; left:0; color:var(--red); font-weight:700;}
+
+/* Doubts */
+.doubtcard{display:flex; gap:14px; padding:16px 0; border-bottom:1px solid var(--border);}
+.doubtcard:last-child{border-bottom:none;}
+.votecol{display:flex; flex-direction:column; align-items:center; gap:2px; width:44px; flex-shrink:0;}
+.votecol .n{font-weight:700; font-family:'JetBrains Mono',monospace;}
+.answercard{border:1px solid var(--border); border-radius:12px; padding:14px; margin-top:10px;}
+.answercard.accepted{border-color:var(--green); background:rgba(52,211,153,.06);}
+
+/* Chat */
+.chatwin{display:flex; flex-direction:column; height:560px; border:1px solid var(--border); border-radius:16px; overflow:hidden; background:var(--surface);}
+.chatlog{flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:14px;}
+.msg{max-width:80%; padding:12px 15px; border-radius:14px; font-size:13.5px; line-height:1.5;}
+.msg.user{align-self:flex-end; background:linear-gradient(135deg,var(--violet),var(--pink)); color:#fff; border-bottom-right-radius:4px;}
+.msg.ai{align-self:flex-start; background:var(--surface2); border:1px solid var(--border); border-bottom-left-radius:4px;}
+.chatinputbar{display:flex; gap:8px; padding:14px; border-top:1px solid var(--border);}
+.suggestchips{display:flex; gap:8px; flex-wrap:wrap; padding:0 14px 12px;}
+.chip{background:var(--surface2); border:1px solid var(--border); padding:6px 12px; border-radius:20px; font-size:12px; font-weight:600;}
+.chip:hover{border-color:var(--border2);}
+
+/* Focus */
+.timerCircle{width:220px; height:220px; border-radius:50%; border:3px solid var(--border); display:flex; align-items:center; justify-content:center; flex-direction:column; margin:0 auto; position:relative; background:conic-gradient(from -90deg, var(--violet) var(--pct,0%), transparent 0);}
+.timerCircle .inner{width:186px; height:186px; border-radius:50%; background:var(--surface); display:flex; flex-direction:column; align-items:center; justify-content:center;}
+.timerCircle .t{font-size:34px; font-weight:700; font-family:'JetBrains Mono',monospace;}
+
+/* Quiz */
+.qopt{display:block; padding:12px 14px; border:1px solid var(--border); border-radius:10px; margin-bottom:8px; cursor:pointer; font-size:14px; transition:all .12s;}
+.qopt:hover{border-color:var(--border2);}
+.qopt.selected{border-color:var(--violet); background:rgba(139,92,246,.1);}
+.qopt.correct{border-color:var(--green); background:rgba(52,211,153,.1);}
+.qopt.incorrect{border-color:var(--red); background:rgba(251,113,133,.1);}
+
+/* Table (admin) */
+table{width:100%; border-collapse:collapse; font-size:13px;}
+th{text-align:left; color:var(--muted); font-weight:600; padding:10px 12px; border-bottom:1px solid var(--border); font-size:11.5px; text-transform:uppercase; letter-spacing:.05em;}
+td{padding:12px; border-bottom:1px solid var(--border); vertical-align:middle;}
+tr:last-child td{border-bottom:none;}
+
+.tabbar{display:flex; gap:4px; border-bottom:1px solid var(--border); margin-bottom:20px; overflow-x:auto;}
+.tabbtn{padding:10px 16px; font-weight:600; font-size:13.5px; color:var(--muted); border-bottom:2px solid transparent; white-space:nowrap;}
+.tabbtn.active{color:var(--text); border-color:var(--violet);}
+
+.empty{text-align:center; padding:50px 20px; color:var(--muted);}
+.empty .ic{font-size:36px; margin-bottom:10px;}
+
+.toastwrap{position:fixed; bottom:24px; right:24px; z-index:200; display:flex; flex-direction:column; gap:10px;}
+.toast{background:var(--surface); border:1px solid var(--border2); border-radius:12px; padding:13px 18px; box-shadow:var(--shadow); font-size:13.5px; font-weight:500; animation:slidein .25s ease; max-width:300px;}
+@keyframes slidein{from{transform:translateX(30px); opacity:0} to{transform:translateX(0); opacity:1}}
+
+.footerbar{border-top:1px solid var(--border); padding:26px 0; text-align:center; color:var(--muted2); font-size:12.5px; margin-top:auto;}
+.trust{display:flex; gap:8px; align-items:flex-start; background:var(--surface2); border:1px solid var(--border); border-radius:12px; padding:12px 14px; font-size:12.5px; color:var(--muted);}
+</style>
+</head>
+<body>
+
+<div id="neonbg">
+  <div class="gridlines"></div>
+  <div class="blob blob1"></div>
+  <div class="blob blob2"></div>
+  <div class="blob blob3"></div>
+  <svg class="loopsvg a" viewBox="0 0 200 200"><circle cx="100" cy="100" r="80" fill="none" stroke="var(--cyan)" stroke-width="1.5" stroke-dasharray="6 10"/><circle cx="100" cy="100" r="55" fill="none" stroke="var(--violet)" stroke-width="1.5"/></svg>
+  <svg class="loopsvg b" viewBox="0 0 200 200"><polygon points="100,10 190,60 190,140 100,190 10,140 10,60" fill="none" stroke="var(--pink)" stroke-width="1.5"/></svg>
+</div>
+
+<div id="app"></div>
+<div class="toastwrap" id="toastwrap"></div>
+
+<script>
+/* =========================================================
+   VIDYALOOP — MVP DEMO APP
+   Frontend-only prototype. All "AI" and backend calls are
+   mocked in the AI / DATA layer below so the whole product
+   is demonstrable end-to-end. Swap these for real services
+   (Supabase + an LLM API) without touching the view layer.
+========================================================= */
+
+/* ---------------- DATA LAYER (mock DB) ---------------- */
+const SUBJECTS = ["Mathematics","Physics","Chemistry","Biology","English","Social Science"];
+const CLASSES = [8,9,10,11,12];
+const AVAT_COLORS = ["#8B5CF6","#22D3EE","#FF3EA5","#34D399","#FFB020","#60A5FA"];
+function uid(p){ return p+"_"+Math.random().toString(36).slice(2,9); }
+function pick(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+function randInt(a,b){ return Math.floor(Math.random()*(b-a+1))+a; }
+function initials(name){ return name.split(" ").map(w=>w[0]).slice(0,2).join("").toUpperCase(); }
+function colorFor(seed){ let h=0; for(const c of seed) h+=c.charCodeAt(0); return AVAT_COLORS[h%AVAT_COLORS.length]; }
+function timeAgo(ts){ const d=Math.floor((Date.now()-ts)/60000); if(d<1)return "just now"; if(d<60)return d+"m ago"; if(d<1440)return Math.floor(d/60)+"h ago"; return Math.floor(d/1440)+"d ago"; }
+
+
+/* No fake/seeded notes — the marketplace starts empty. Resources only ever
+   appear here after a real logged-in student uploads one and it's approved. */
+let RESOURCES = [];
+
+/* No fake doubts either — the doubts board starts empty until real
+   logged-in students post real questions. */
+let DOUBTS = [];
+
+let ADMIN_PENDING = [];
+
+/* ---- OWNER LOCK ----
+   Only this exact name + passcode combination ever gets admin access.
+   There is NO fallback (no "first login becomes owner"), so nobody can
+   get here by accident, no matter who logs in or in what order.
+   NOTE (please read): this is a static HTML file with no real server or
+   authentication. Anyone who opens their browser's DevTools could still
+   technically read this passcode from the page source, or force
+   isOwner=true via the console. There is no way to make a client-only
+   file 100% unbreakable — true security would need a real backend. This
+   is the strongest protection possible without one: it stops every
+   normal person (including someone typing your name by coincidence)
+   from ever reaching the admin panel by mistake or by guessing. */
+/* ---------------- SUPABASE (real backend) ----------------
+   Fill in YOUR project's URL + anon key below (Supabase Dashboard →
+   Project Settings → API). The anon key is safe to expose publicly —
+   access is controlled by Row Level Security policies on your tables,
+   not by hiding this key. Until filled in, the site runs in offline
+   demo mode (nothing persists). See setup notes at the end of this file. */
+const supabaseConfig = {
+  url: "https://noksyofgrlqhzeukpbus.supabase.co",
+  anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5va3N5b2ZncmxxaHpldWtwYnVzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc1MTQ3ODYsImV4cCI6MjEwMzA5MDc4Nn0.YuTOFRdhKVF5orcIMgPE6Of07VtxCXdQT3flOy-T65c"
+};
+
+/* Fill these in after deploying the two Edge Functions (see backend/README.md).
+   keyId is your Razorpay TEST Key ID — public, safe to expose (the secret
+   key stays server-side only, in Supabase's secrets, never here). */
+const PAYMENT_CONFIG = {
+  razorpayKeyId: "YOUR_RAZORPAY_KEY_ID", // fill in after you deploy the Edge Functions + get a Razorpay account
+  createOrderUrl: "https://noksyofgrlqhzeukpbus.supabase.co/functions/v1/create-order",
+  verifyPaymentUrl: "https://noksyofgrlqhzeukpbus.supabase.co/functions/v1/verify-payment"
+};
+const paymentsConfigured = PAYMENT_CONFIG.razorpayKeyId !== "YOUR_RAZORPAY_KEY_ID";
+
+let usingRealBackend = false;
+let sb = null;
+try{
+  if(supabaseConfig.url !== "YOUR_SUPABASE_URL" && window.supabase){
+    sb = window.supabase.createClient(supabaseConfig.url, supabaseConfig.anonKey);
+    usingRealBackend = true;
+  }
+}catch(e){ console.error("Supabase init failed:", e); usingRealBackend = false; }
+
+/* Simple key-value layer on top of a Postgres table (see setup SQL at the
+   bottom of this file) — keeps the rest of the app's code (persistUser,
+   persistCatalog, loadAllUsers, etc.) unchanged. Falls back to in-memory
+   storage (this session only) if Supabase isn't configured. */
+const _memoryStore = { shared:{}, local:{} };
+const Store = {
+  async hasAuthenticatedSession(){
+    if(!usingRealBackend || !sb) return true;
+    try{
+      const { data } = await sb.auth.getSession();
+      return !!data?.session;
+    }catch(e){ return false; }
+  },
+  async get(key){
+    if(usingRealBackend){
+      // Never query the RLS-protected kv table before Supabase auth exists.
+      // Login/signup must authenticate first; boot may run anonymously.
+      if(!(await this.hasAuthenticatedSession())) return null;
+      const { data, error } = await sb.from("kv").select("value").eq("key", key).maybeSingle();
+      if(error){ console.error("Store.get failed:", error); return null; }
+      return data ? data.value : null;
+    }
+    return _memoryStore.shared[key] ?? null;
+  },
+  async set(key, value){
+    if(usingRealBackend){
+      if(!(await this.hasAuthenticatedSession())) return false;
+      const { error } = await sb.from("kv").upsert({ key, value });
+      if(error){ console.error("Store.set failed:", error); return false; }
+      return true;
+    }
+    _memoryStore.shared[key] = value;
+    return true;
+  },
+  async list(prefix){
+    if(usingRealBackend){
+      if(!(await this.hasAuthenticatedSession())) return [];
+      const { data, error } = await sb.from("kv").select("key").like("key", prefix+"%");
+      if(error){ console.error("Store.list failed:", error); return []; }
+      return (data||[]).map(d=>d.key);
+    }
+    return Object.keys(_memoryStore.shared).filter(k=>!prefix || k.startsWith(prefix));
+  }
+};
+
+/* Real file storage (Supabase Storage) for uploaded PDFs/images — no size
+   limits like a database row would have. Returns a real hosted URL.
+   Bucket names match the ones already created in Supabase Storage. */
+async function uploadFileToStorage(resId, file){
+  if(!usingRealBackend) return null;
+  const path = resId+"/"+file.name;
+  const { error } = await sb.storage.from("resources").upload(path, file, { upsert: true });
+  if(error){ console.error("File upload failed:", error); return null; }
+  const { data } = sb.storage.from("resources").getPublicUrl(path);
+  return data.publicUrl;
+}
+async function uploadStoreLogo(storeId, file){
+  if(!usingRealBackend || !file) return null;
+  const path = storeId+"/"+file.name;
+  const { error } = await sb.storage.from("store-logos").upload(path, file, { upsert: true });
+  if(error){ console.error("Logo upload failed:", error); return null; }
+  const { data } = sb.storage.from("store-logos").getPublicUrl(path);
+  return data.publicUrl;
+}
+async function uploadProductImage(productId, file){
+  if(!usingRealBackend || !file) return null;
+  const path = productId+"/"+file.name;
+  const { error } = await sb.storage.from("product-images").upload(path, file, { upsert: true });
+  if(error){ console.error("Product image upload failed:", error); return null; }
+  const { data } = sb.storage.from("product-images").getPublicUrl(path);
+  return data.publicUrl;
+}
+
+function slugEmail(name){ return name.trim().toLowerCase().replace(/[^a-z0-9]+/g,".").replace(/^\.+|\.+$/g,"")+"@vidyaloop.local"; }
+
+function userKey(name){ return "user:"+name.trim().toLowerCase(); }
+
+async function persistUser(){
+  if(!state.user) return;
+  const u = state.user;
+  const record = {
+    name:u.name, class:u.class, board:u.board, bio:u.bio,
+    points:u.points, reputation:u.reputation, level:u.level, badges:u.badges,
+    uploaded:u.uploaded, purchased:u.purchased, saved:u.saved, asked:u.asked, answeredIds:u.answeredIds,
+    ratedResources:u.ratedResources, redeemed:u.redeemed, recentlyViewed:u.recentlyViewed,
+    quizHistory:u.quizHistory, streak:u.streak, joinDate:u.joinDate,
+    pointsEarnedToday:u.pointsEarnedToday, pointsEarnedDate:u.pointsEarnedDate,
+    focusLog: state.focus.log, transactions: state.transactions,
+    passwordHash: u._passwordHash,
+    firstLogin: u._firstLogin || Date.now(), lastLogin: Date.now(),
+    loginCount: u._loginCount || 1, status: "active", owner: u.isOwner
+  };
+  await Store.set(userKey(u.name), JSON.stringify(record), true);
+  if(usingRealBackend && u._authUserId){
+    await sb.from("profiles").update({ bio:u.bio, reputation:u.reputation, class:u.class, board:u.board, streak:u.streak }).eq("id", u._authUserId);
+  }
+}
+
+async function persistCatalog(){
+  if(usingRealBackend){
+    // Resources, doubts, reviews now live in real Supabase tables (source of
+    // truth) — only reports have no dedicated table in this schema, so that
+    // still goes to kv, same as admin config used to before it got a real table.
+    await Store.set("platform:reports", JSON.stringify(ADMIN_REPORTS), true);
+    return;
+  }
+  const data = { RESOURCES, DOUBTS, ADMIN_PENDING, ADMIN_REPORTS, REVIEWS };
+  await Store.set("platform:catalog", JSON.stringify(data), true);
+}
+
+let _saveTimer = null;
+function scheduleSave(){
+  if(!state.user) return;
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(()=>{ persistUser(); persistCatalog(); }, 600);
+}
+
+async function loadAllUsers(){
+  const keys = await Store.list("user:", true);
+  const list = [];
+  for(const k of keys){
+    const raw = await Store.get(k, true);
+    if(raw){ try{ list.push(JSON.parse(raw)); }catch(e){} }
+  }
+  state.allUsersCache = list.sort((a,b)=>b.lastLogin-a.lastLogin);
+  render();
+}
+window.loadAllUsers = loadAllUsers;
+
+const OWNER_NAME = "Saksham Mishra";
+const OWNER_PASSCODE = "loop2026admin"; // simple to type — change before wide sharing
+function resolveIsOwner(name, passcode){
+  const n = (name||"").trim().toLowerCase();
+  return n === OWNER_NAME.toLowerCase() && passcode === OWNER_PASSCODE;
+}
+function checkOwnerReveal(which){
+  const nameEl = document.getElementById(which+"Name");
+  const wrap = document.getElementById(which+"OwnerWrap");
+  if(!nameEl || !wrap) return;
+  const match = nameEl.value.trim().toLowerCase() === OWNER_NAME.toLowerCase();
+  wrap.style.display = match ? "block" : "none";
+}
+window.checkOwnerReveal = checkOwnerReveal;
+
+let ADMIN_REPORTS = [];
+let REVIEWS = {}; // resourceId -> [{userId, userName, rating, text, ts}]
+
+const STORE_PRODUCTS = [
+  { id:"prod_1", name:"Premium Notebook Set (5 pcs)", cost:60, icon:"📓", desc:"Ruled A4 notebooks, 200 pages each." },
+  { id:"prod_2", name:"Gel Pen Combo Pack", cost:25, icon:"🖊️", desc:"Set of 6 smooth gel pens." },
+  { id:"prod_3", name:"Geometry Box", cost:45, icon:"📐", desc:"Full geometry set with compass & scales." },
+  { id:"prod_4", name:"Weekly Study Planner", cost:35, icon:"🗓️", desc:"52-week planner with habit tracker." },
+  { id:"prod_5", name:"Subject Flashcard Deck", cost:30, icon:"🗂️", desc:"100-card blank flashcard deck + box." },
+  { id:"prod_6", name:"Exam Prep Kit", cost:120, icon:"🎒", desc:"Notebook + pens + planner + flashcards bundle." },
+];
+
+const QUESTION_BANKS = {
+  Mathematics:[
+    {q:"What is the value of sin(90°)?", options:["0","1","∞","0.5"], correct:1, topic:"Trigonometry"},
+    {q:"Which of these is a quadratic equation?", options:["x+2=0","x²+3x+2=0","2x=5","x³=8"], correct:1, topic:"Quadratic Equations"},
+    {q:"The HCF of two co-prime numbers is always:", options:["1","0","Their product","Their sum"], correct:0, topic:"Real Numbers"},
+    {q:"Degree of the polynomial 4x³+2x-7 is:", options:["1","2","3","4"], correct:2, topic:"Polynomials"},
+    {q:"Mean of 2, 4, 6, 8 is:", options:["4","5","6","20"], correct:1, topic:"Statistics"},
+  ],
+  Physics:[
+    {q:"SI unit of force is:", options:["Joule","Watt","Newton","Pascal"], correct:2, topic:"Force & Laws of Motion"},
+    {q:"An object at rest stays at rest unless acted upon by an external force — this is:", options:["Newton's 1st law","Newton's 2nd law","Newton's 3rd law","Law of gravitation"], correct:0, topic:"Force & Laws of Motion"},
+    {q:"Acceleration due to gravity on Earth is approximately:", options:["9.8 m/s²","6.6 m/s²","3.2 m/s²","12.4 m/s²"], correct:0, topic:"Gravitation"},
+    {q:"Work done is zero when:", options:["Force and displacement are parallel","Force is zero or displacement is zero","Force is maximum","None of these"], correct:1, topic:"Work & Energy"},
+    {q:"A convex lens is also called a:", options:["Diverging lens","Converging lens","Plane lens","None"], correct:1, topic:"Light — Reflection & Refraction"},
+  ],
+  Chemistry:[
+    {q:"pH of a neutral solution is:", options:["0","7","14","1"], correct:1, topic:"Acids Bases & Salts"},
+    {q:"Rusting of iron is an example of:", options:["Physical change","Chemical reaction","Nuclear reaction","None"], correct:1, topic:"Chemical Reactions"},
+    {q:"Which is the most reactive metal among these?", options:["Gold","Copper","Sodium","Silver"], correct:2, topic:"Metals & Non-metals"},
+    {q:"Carbon typically forms how many covalent bonds?", options:["2","3","4","6"], correct:2, topic:"Carbon Compounds"},
+  ],
+  Biology:[
+    {q:"The basic functional unit of the kidney is:", options:["Neuron","Nephron","Alveolus","Nucleus"], correct:1, topic:"Life Processes"},
+    {q:"The control centre of the human body is the:", options:["Heart","Brain","Liver","Lungs"], correct:1, topic:"Control & Coordination"},
+    {q:"DNA carries information from one generation to the next — this is the basis of:", options:["Evolution","Heredity","Respiration","Digestion"], correct:1, topic:"Heredity & Evolution"},
+  ],
+  English:[
+    {q:"A metaphor is a figure of speech that:", options:["Compares using 'like' or 'as'","Directly states one thing is another","Repeats initial sounds","Is a question not needing an answer"], correct:1, topic:"Poetry Devices"},
+    {q:"Which tense is used in: 'She has finished her homework'?", options:["Simple past","Present perfect","Future continuous","Past perfect"], correct:1, topic:"Grammar — Tenses"},
+  ],
+  "Social Science":[
+    {q:"The Non-Cooperation Movement was launched in:", options:["1920","1930","1942","1947"], correct:0, topic:"Nationalism in India"},
+    {q:"Which of these is a renewable resource?", options:["Coal","Petroleum","Solar energy","Natural gas"], correct:2, topic:"Resources & Development"},
+  ]
+};
+
+/* ---------------- AI SERVICE (mocked, modular) ---------------- */
+/* Lightweight built-in knowledge base so the assistant can actually answer
+   conceptual doubts, not just search notes. This runs entirely in the
+   browser (no external AI API) — it's real pattern-matched content,
+   not a live model, so be upfront with students that it won't know
+   everything. */
+const KNOWLEDGE_BASE = [
+  { keywords:["newton","force and law","laws of motion","inertia"], explanation:"Newton's three laws of motion: (1) An object stays at rest or in uniform motion unless acted on by an unbalanced force — this is inertia. (2) Force = mass × acceleration (F = ma). (3) For every action there's an equal and opposite reaction. Together they explain everything from why you jerk forward when a bus brakes to how rockets launch." },
+  { keywords:["gravitation","gravity"], explanation:"Gravitation is the force of attraction between any two masses. Newton's law of gravitation says this force is proportional to the product of the two masses and inversely proportional to the square of the distance between them (F = Gm₁m₂/r²). It's why objects fall to the ground and why planets orbit the sun." },
+  { keywords:["work and energy","kinetic energy","potential energy","work done"], explanation:"Work is done when a force moves an object through a distance (Work = Force × Displacement, in the direction of the force). Kinetic energy (½mv²) depends on motion; potential energy (mgh) depends on height/position. Energy changes form but the total is always conserved." },
+  { keywords:["reflection","refraction","convex lens","concave lens","mirror"], explanation:"Reflection is light bouncing off a surface (angle of incidence = angle of reflection). Refraction is light bending as it passes between materials of different density, because its speed changes. Convex lenses converge light (used in magnifying glasses); concave lenses diverge it (used to correct short-sightedness)." },
+  { keywords:["trigonometry","sin ","cos ","tan ","sine","cosine","tangent"], explanation:"Trigonometry relates the angles and sides of a right triangle. sin θ = opposite/hypotenuse, cos θ = adjacent/hypotenuse, tan θ = opposite/adjacent. Knowing any two of these lets you find an unknown side or angle." },
+  { keywords:["quadratic equation","quadratic formula"], explanation:"A quadratic equation looks like ax² + bx + c = 0. Solve it by factoring, completing the square, or the quadratic formula x = (-b ± √(b²-4ac)) / 2a. The discriminant (b²-4ac) tells you how many real roots exist: two if positive, one if zero, none if negative." },
+  { keywords:["real numbers","hcf","lcm","euclid"], explanation:"Real numbers include rational numbers (fractions, integers) and irrational numbers (like √2 or π). Euclid's division lemma and the fundamental theorem of arithmetic are used to find HCF and LCM by breaking numbers into prime factors." },
+  { keywords:["polynomial","zeroes of"], explanation:"A polynomial is an expression like 4x³ + 2x − 7. Its 'zeroes' are the x-values that make it equal zero — where its graph crosses the x-axis. The degree tells you the maximum number of zeroes it can have." },
+  { keywords:["mean median mode","statistics"], explanation:"Mean is the average (sum ÷ count). Median is the middle value when data is sorted. Mode is the most frequent value. Together they describe where most of a data set clusters." },
+  { keywords:["chemical reaction","balancing equation"], explanation:"A chemical reaction turns reactants into new products with different properties — often shown by a color change, gas bubbles, or a precipitate. Equations are balanced so the number of atoms of each element matches on both sides (conservation of mass)." },
+  { keywords:["acid","base ","salt","ph "], explanation:"Acids release H⁺ ions and taste sour (like lemon juice); bases release OH⁻ ions and taste bitter (like soap). pH runs 0–14: below 7 is acidic, above 7 is basic, 7 is neutral. Acid + base → salt + water (neutralisation)." },
+  { keywords:["metal","non-metal","reactivity series"], explanation:"Metals are typically shiny, malleable, good conductors, and lose electrons to form positive ions. Non-metals are usually dull, brittle, poor conductors, and gain electrons. The reactivity series ranks metals by how easily they react — more reactive metals displace less reactive ones from compounds." },
+  { keywords:["carbon compound","covalent bond","hydrocarbon"], explanation:"Carbon forms four covalent bonds, letting it build long chains and rings — the basis of countless organic compounds. Hydrocarbons can be saturated (single bonds, e.g. alkanes) or unsaturated (double/triple bonds, e.g. alkenes/alkynes)." },
+  { keywords:["photosynthesis","life process","nutrition in plant","respiration","excretion"], explanation:"Life processes keep organisms alive: nutrition (in plants, photosynthesis uses sunlight to turn CO₂ and water into glucose), respiration (breaking down food to release energy), transportation (moving substances around the body), and excretion (removing waste)." },
+  { keywords:["nervous system","hormone","neuron","control and coordination"], explanation:"Control and coordination happens via the nervous system (fast electrical signals through neurons) and the endocrine system (slower chemical signals via hormones). A neuron carries impulses from receptors to the brain/spinal cord and back to muscles, enabling reflexes and voluntary movement." },
+  { keywords:["heredity","evolution","gene","dna"], explanation:"Heredity is the passing of traits from parents to offspring via genes (segments of DNA). Variations arise during reproduction; evolution is the gradual change in a species as helpful variations get naturally selected because they improve survival and reproduction." },
+  { keywords:["metaphor","simile","alliteration","figure of speech","poetic device"], explanation:"A simile compares using 'like' or 'as' ('brave as a lion'). A metaphor says one thing IS another ('time is a thief'). Personification gives human qualities to non-human things. Alliteration repeats initial consonant sounds ('soft summer sun')." },
+  { keywords:["tense","present perfect","past tense","future tense"], explanation:"Tenses show when something happens. Simple present/past/future describe a single point in time. Perfect tenses (has/have/had + past participle) show an action completed before another point — e.g. 'She has finished' means it's done and relevant now." },
+  { keywords:["non-cooperation","civil disobedience","nationalism in india"], explanation:"Indian nationalism grew through mass movements like the Non-Cooperation Movement (1920, led by Gandhi, urging a boycott of British goods/institutions) and the Civil Disobedience Movement (1930, marked by the Salt March), uniting people across class and region against colonial rule." },
+  { keywords:["renewable resource","non-renewable","resources and development"], explanation:"Renewable resources (solar, wind, water) can be replenished naturally. Non-renewable resources (coal, petroleum) take millions of years to form and are being used up faster than they're replaced." },
+  { keywords:["democracy","social diversity"], explanation:"Democracy is a system where power ultimately rests with the people, usually via elected representatives. Social diversity (religion, region, language, caste) doesn't threaten democracy by itself — problems arise mainly when one identity is used to dominate or exclude others." },
+  { keywords:["credit","interest rate","money and credit"], explanation:"Money makes exchange easier as a common medium — no bartering needed. Credit is when a lender gives money/goods now for repayment (often with interest) later. Banks take deposits and lend money; credit can support productive activity but can also trap people in debt on unfair terms." },
+];
+
+const AIService = {
+  evaluateResource({title, description, pages, subject}){
+    let score = 60;
+    score += Math.min(20, Math.floor((description||"").length/12));
+    score += Math.min(10, pages);
+    score += randInt(-4,8);
+    score = Math.max(45, Math.min(98, score));
+    const price = Math.min(ADMIN_CONFIG.maxResourcePrice, Math.max(12, Math.round(score*0.75 + pages*1.4)));
+    const confidence = score>85?"High":score>65?"Medium":"Low";
+    const strengths = ["Good topic coverage for "+subject,"Clear structure and headings","Reasonable length for the chapter"].slice(0, score>75?3:2);
+    const weaknesses = score<80 ? ["Could include more worked examples","Add diagrams where relevant","Proofread for clarity"].slice(0,2) : ["Consider adding a couple of advanced practice questions"];
+    return { score, price, confidence, strengths, weaknesses };
+  },
+  explainDoubt(qLower){
+    const match = KNOWLEDGE_BASE.find(k => k.keywords.some(kw=>qLower.includes(kw)));
+    return match ? match.explanation : null;
+  },
+  summarize(text){
+    const clean = text.replace(/\s+/g,' ').trim();
+    const sentences = clean.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [clean];
+    if(sentences.length<=3) return clean;
+    const stop = new Set(["the","is","a","an","and","or","of","to","in","on","for","with","that","this","it","as","are","was","were","be","by","at","from","which","their","its","but","not","also","has","have","had","you","your","they","we","he","she"]);
+    const freq = {};
+    clean.toLowerCase().split(/\W+/).forEach(w=>{ if(w && !stop.has(w) && w.length>2) freq[w]=(freq[w]||0)+1; });
+    const scored = sentences.map((s,i)=>{
+      const words = s.toLowerCase().split(/\W+/).filter(w=>w && !stop.has(w));
+      const score = words.length ? words.reduce((sum,w)=>sum+(freq[w]||0),0)/words.length : 0;
+      return {s:s.trim(), i, score};
+    });
+    const topCount = Math.max(2, Math.min(5, Math.ceil(sentences.length*0.3)));
+    return scored.sort((a,b)=>b.score-a.score).slice(0,topCount).sort((a,b)=>a.i-b.i).map(t=>t.s).join(' ');
+  },
+  assistantReply(query, ctx){
+    const rawQ = query.trim();
+    const q = rawQ.toLowerCase();
+
+    // Intent 1: summarize/explain a pasted passage
+    const explicitSummarize = /^(summarize|summarise|explain this|tldr|tl;dr)[:\s]/i.test(rawQ);
+    const looksLikePastedContent = rawQ.split(/\s+/).length > 45;
+    if(explicitSummarize || looksLikePastedContent){
+      const content = rawQ.replace(/^(summarize|summarise|explain this|tldr|tl;dr)[:\s]*/i,'');
+      if(content.split(/\s+/).length < 15){
+        return {text:"Paste a longer passage (a paragraph or more) and I'll summarize and explain the key points for you.", resources:[]};
+      }
+      const summary = AIService.summarize(content);
+      return {text:`Here's a summary of what you shared:\n\n${summary}\n\nWant me to explain a specific part further, or generate a quick quiz from it?`, resources:[]};
+    }
+
+    // Intent 2: answer a conceptual doubt directly
+    const looksLikeSearch = /class\s?\d|under\s?\d+|below\s?\d+|\d+\s?points?|cheapest|cheap notes|best rated|top rated|highest rat|compare/.test(q);
+    const looksLikeQuestion = /^(what|why|how|explain|define|when|who|tell me about)\b/.test(q) || q.endsWith("?");
+    if(looksLikeQuestion && !looksLikeSearch){
+      const explanation = AIService.explainDoubt(q);
+      if(explanation) return {text:`${explanation}\n\nWant me to also find notes on this topic, or generate a quick quiz to test yourself?`, resources:[]};
+      return {text:"I don't have a ready explanation for that specific one — try posting it on the Doubts board so another student can help, or ask me about a named topic (e.g. \"explain trigonometry\" or \"what is Newton's second law\").", resources:[]};
+    }
+
+    // Intent 3: fall back to marketplace resource recommendations
+    let pool = RESOURCES.slice();
+    let note = "";
+    const subjMatch = SUBJECTS.find(s=>q.includes(s.toLowerCase()));
+    if(subjMatch){ pool = pool.filter(r=>r.subject===subjMatch); note+=` in ${subjMatch}`; }
+    const clsMatch = q.match(/class\s?(\d{1,2})/);
+    if(clsMatch){ const c=Number(clsMatch[1]); pool=pool.filter(r=>r.class===c); note+=` for Class ${c}`; }
+    const underMatch = q.match(/under\s?(\d+)|below\s?(\d+)|(\d+)\s?points?/);
+    if(underMatch){ const n=Number(underMatch[1]||underMatch[2]||underMatch[3]); if(n){ pool=pool.filter(r=>r.price<=n); note+=` under ${n} points`; } }
+    if(q.includes("highest rat") || q.includes("best rated") || q.includes("top rated")){
+      pool = pool.sort((a,b)=>b.rating-a.rating);
+    } else if(q.includes("cheap")){
+      pool = pool.sort((a,b)=>a.price-b.price);
+    } else {
+      pool = pool.sort((a,b)=>b.aiScore-a.aiScore);
+    }
+    pool = pool.slice(0,3);
+    if(!pool.length) return {text:`I couldn't find resources matching that${note}. Try broadening the class, subject or budget — or if nothing's been uploaded for this topic yet, be the first to upload one!`, resources:[]};
+    const top = pool[0];
+    let text = `Here's what I'd recommend${note || " overall"}:\n\nTop pick: ${top.title}\nAI score: ${top.aiScore}/100 · Rating: ${top.rating}/5 · Price: ${top.price} pts\nWhy: ${top.pros[0]?.toLowerCase()||"solid coverage"}${top.pros[1]?", "+top.pros[1].toLowerCase():""}.\nWorth noting: ${top.cons[0]?.toLowerCase()||"no major drawbacks flagged"}.`;
+    if(pool.length>1) text += `\n\nI also found ${pool.length-1} more option${pool.length>2?"s":""} below — ask me to compare them if you'd like.`;
+    return {text, resources:pool};
+  },
+  generateQuiz(resource, count){
+    const bank = QUESTION_BANKS[resource.subject] || QUESTION_BANKS.Mathematics;
+    let qs = bank.slice();
+    while(qs.length<count){ qs = qs.concat(bank); }
+    // shuffle-ish
+    qs = qs.sort(()=>Math.random()-0.5).slice(0,count);
+    return qs.map((q,i)=>({...q, id:i}));
+  }
+};
+
+/* ---------------- STATE ---------------- */
+const state = {
+  theme: localStorageGet("vl_theme") || "dark",
+  route: "landing",
+  params: {},
+  user: null,
+  notifOpen: false,
+  notifications: [],
+  transactions: [],
+  focus: { active:false, paused:false, startedAt:null, pausedAt:null, elapsed:0, subject:"", timer:null, log: [] },
+  chat: [{role:"ai", text:"Hi! Tell me your class, subject, or budget and I'll help you find the best notes. Try: \"Find the best Class 9 Physics notes\" or \"Notes under 60 points\"."}],
+  quiz: null,
+  search: "",
+  facecamActive: false,
+  facecamDownloadUrl: null,
+  pricing: { monthly_price_inr:99, yearly_price_inr:999, monthly_rp:500, yearly_rp:6000, rp_per_rupee:5 },
+  subscription: null, // {plan, status, expiry_date} for the current user
+  myStore: null,      // this user's store row, if they're a store owner
+  myProducts: [],
+  storeMarketAll: [], // all stores+products for the student-facing marketplace
+  promoCodes: [],     // admin view
+  redemptions: [],     // admin view
+  adminStores: null,
+  adminSubs: null,
+  adminTx: null
+};
+/* Admin-configurable platform rules — wired into real logic below, not just displayed */
+const ADMIN_CONFIG = {
+  answerReward: 5,
+  acceptedBonus: 10,
+  reportPenalty: 8,
+  notHelpfulPenalty: 3,
+  maxResourcePrice: 150,
+  autoApproveThreshold: 70,
+  dailyPointCap: 40
+};
+function localStorageGet(){ return null; } // no persistent storage in this sandbox demo
+function toast(msg){
+  const wrap = document.getElementById("toastwrap");
+  const el = document.createElement("div");
+  el.className="toast"; el.textContent=msg;
+  wrap.appendChild(el);
+  setTimeout(()=>{ el.style.opacity="0"; el.style.transition="opacity .3s"; setTimeout(()=>el.remove(),300); }, 3200);
+}
+function notify(title, desc){
+  state.notifications.unshift({id:uid("n"), title, desc, ts:Date.now(), read:false});
+  toast(title);
+  renderNavOnly();
+}
+function addTx(reason, amount){
+  state.transactions.unshift({id:uid("tx"), reason, amount, ts:Date.now(), balance: state.user.points});
+}
+/* Anti-abuse: caps how many Reward Points a student can EARN (not spend) per day.
+   Returns the amount actually granted (may be less than requested, or 0 if capped). */
+function grantPoints(amount, reason){
+  const u = state.user;
+  const today = new Date().toDateString();
+  if(u.pointsEarnedDate !== today){ u.pointsEarnedDate = today; u.pointsEarnedToday = 0; }
+  const remaining = Math.max(0, ADMIN_CONFIG.dailyPointCap - u.pointsEarnedToday);
+  const granted = Math.min(amount, remaining);
+  if(granted <= 0){
+    toast("Daily earning limit reached ("+ADMIN_CONFIG.dailyPointCap+" pts/day) — come back tomorrow to earn more.");
+    return 0;
+  }
+  u.points += granted;
+  u.pointsEarnedToday += granted;
+  addTx(reason + (granted<amount? " (capped by daily limit)":""), granted);
+  if(granted<amount) toast("Only +"+granted+" pts awarded — daily earning limit reached.");
+  return granted;
+}
+
+/* ---------------- ROUTER ---------------- */
+function nav(route, params={}){
+  if(["dashboard","marketplace","doubts","assistant","focus","library","seller","admin","profile","store","storeDashboard","storeMarketplace","premium","storeOrders"].includes(route) && !state.user){
+    route="login"; toast("Please log in to continue.");
+  }
+  if(route==="admin" && state.user && !state.user.isOwner){
+    route="dashboard"; toast("Admin access is restricted to the site owner.");
+  }
+  if(route==="storeDashboard" && state.user && state.user.accountType!=="store_owner"){
+    route="dashboard"; toast("Store Dashboard is only available for Store Owner accounts.");
+  }
+  if(state.route==="focus" && route!=="focus" && state.facecamActive){
+    stopFacecam();
+    toast("Facecam recording stopped — camera released.");
+  }
+  state.route = route; state.params = params; window.scrollTo(0,0); render();
+}
+window.nav = nav;
+
+/* ---------------- ACTIONS ---------------- */
+
+async function hashPassword(pw){
+  const enc = new TextEncoder().encode(pw||"");
+  const buf = await crypto.subtle.digest("SHA-256", enc);
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+
+function establishSession(name, cls, board, saved, isOwner, loginMeta, accountType){
+  state.user = {
+    id: loginMeta.authUserId || uid("u"), name, class: saved?.class || Number(cls) || 9, board: board||saved?.board||"CBSE",
+    accountType: accountType || saved?.accountType || "student",
+    subjects: SUBJECTS.slice(0,4), bio: saved?.bio || "", avatarColor: colorFor(name||"A"),
+    points: saved?.points ?? 50, reputation: saved?.reputation ?? 50, level: saved?.level || "New Member",
+    badges: saved?.badges || [], isOwner,
+    uploaded: saved?.uploaded || [], purchased: saved?.purchased || [], saved: saved?.saved || [],
+    asked: saved?.asked || [], answeredIds: saved?.answeredIds || [], ratedResources: saved?.ratedResources || [],
+    redeemed: saved?.redeemed || [], recentlyViewed: saved?.recentlyViewed || [],
+    quizHistory: saved?.quizHistory || [], streak: saved?.streak || 0, joinDate: saved?.joinDate || Date.now(),
+    pointsEarnedToday: (saved?.pointsEarnedDate===new Date().toDateString()) ? (saved.pointsEarnedToday||0) : 0,
+    pointsEarnedDate: new Date().toDateString(),
+    _passwordHash: saved?.passwordHash || loginMeta.passwordHash,
+    _firstLogin: saved?.firstLogin || Date.now(), _loginCount: (saved?.loginCount||0)+1,
+    _authUserId: loginMeta.authUserId || null
+  };
+  state.transactions = saved?.transactions || [{id:uid("tx"), reason:"Welcome bonus", amount:50, ts:Date.now(), balance:50}];
+  state.focus.log = saved?.focusLog || [];
+  state.subscription = null; // no subscriptions table in this schema — Premium/promo UI stays but is inert
+  state.notifications = [{id:uid("n"), title: saved? "Welcome back 👋" : "Welcome to VidyaLoop 👋", desc: saved? "Your stats and progress are right where you left them." : "Start by exploring the marketplace or asking a doubt.", ts:Date.now(), read:false}];
+  nav(state.user.accountType==="store_owner" ? "storeDashboard" : "dashboard");
+  toast(isOwner? "Logged in as "+state.user.name+" (Owner)" : "Logged in as "+state.user.name);
+  persistUser();
+  if(state.user.accountType==="store_owner") loadMyStore();
+  if(usingRealBackend){
+    loadPointTransactions();
+    loadResourcesFromDB();
+    loadDoubtsFromDB();
+  }
+}
+
+/* Reads the real transaction history — the source of truth is always
+   reward_point_transactions, never computed/faked on the frontend. */
+async function loadPointTransactions(){
+  if(!usingRealBackend || !state.user?._authUserId) return;
+  const { data, error } = await sb.from("reward_point_transactions").select("*")
+    .eq("user_id", state.user._authUserId).order("created_at",{ascending:false}).limit(100);
+  if(error){ console.error("loadPointTransactions failed:", error); return; }
+  state.transactions = (data||[]).map(t=>({ id:t.id, reason:t.reason, amount:t.amount, ts:new Date(t.created_at).getTime() }));
+  render();
+}
+window.loadPointTransactions = loadPointTransactions;
+
+/* Resources: Supabase is the source of truth. RESOURCES stays as an
+   in-memory cache that view functions read from, but it's populated by
+   this fetch — never persisted back to kv. Approved resources are
+   visible to everyone; a creator additionally sees their own pending ones. */
+async function loadResourcesFromDB(){
+  if(!usingRealBackend) return;
+  const uidNow = state.user?._authUserId;
+  const [approvedRes, mineRes] = await Promise.all([
+    sb.from("resources").select("*, profiles(name)").eq("status","approved").order("created_at",{ascending:false}),
+    uidNow ? sb.from("resources").select("*, profiles(name)").eq("creator_id", uidNow).order("created_at",{ascending:false}) : Promise.resolve({data:[]})
+  ]);
+  const byId = {};
+  (approvedRes.data||[]).forEach(r=> byId[r.id]=mapDbResource(r));
+  (mineRes.data||[]).forEach(r=> byId[r.id]=mapDbResource(r));
+  RESOURCES.length = 0;
+  RESOURCES.push(...Object.values(byId));
+  // Also update the admin pending queue from the DB (owner-only tab, harmless to compute for everyone).
+  const { data: pending } = await sb.from("resources").select("*, profiles(name)").eq("status","pending");
+  ADMIN_PENDING.length = 0;
+  ADMIN_PENDING.push(...(pending||[]).map(mapDbResource));
+  render();
+}
+window.loadResourcesFromDB = loadResourcesFromDB;
+
+function mapDbResource(r){
+  return {
+    id: r.id, title: r.title, creator: r.profiles?.name||"", creatorId: r.creator_id,
+    class: r.class, board: r.board, subject: r.subject, chapter: r.chapter, type: r.type,
+    description: r.description, pages: r.pages, aiScore: r.ai_score, rating: r.rating||0,
+    numRatings: r.num_ratings||0, purchases: r.purchases||0, price: r.price, recommendedPrice: r.price,
+    status: r.status, pros: r.pros||[], cons: r.cons||[], covers: r.covers||[],
+    aiConfidence: r.ai_confidence, createdAt: new Date(r.created_at).getTime(),
+    hasFile: r.has_file, fileName: r.file_name, fileType: r.file_type, fileUrl: r.file_url
+  };
+}
+
+async function loadDoubtsFromDB(){
+  if(!usingRealBackend) return;
+  const { data: doubts, error } = await sb.from("doubts").select("*, profiles(name)").order("created_at",{ascending:false}).limit(100);
+  if(error){ console.error("loadDoubtsFromDB failed:", error); return; }
+  const { data: answers } = await sb.from("doubt_answers").select("*, profiles(name)").order("created_at",{ascending:true});
+  const answersByDoubt = {};
+  (answers||[]).forEach(a=>{
+    if(!answersByDoubt[a.doubt_id]) answersByDoubt[a.doubt_id]=[];
+    answersByDoubt[a.doubt_id].push({
+      id:a.id, author:a.profiles?.name||"", authorId:a.author_id, body:a.body,
+      helpful:a.helpful||0, notHelpful:a.not_helpful||0, accepted:!!a.accepted, createdAt:new Date(a.created_at).getTime()
+    });
+  });
+  DOUBTS.length = 0;
+  DOUBTS.push(...(doubts||[]).map(d=>({
+    id:d.id, title:d.title, subject:d.subject, chapter:d.chapter, class:d.class,
+    author:d.profiles?.name||"", authorId:d.author_id, body:d.body, views:d.views||0,
+    createdAt:new Date(d.created_at).getTime(), answers: answersByDoubt[d.id]||[]
+  })));
+  render();
+}
+window.loadDoubtsFromDB = loadDoubtsFromDB;
+
+
+/* Pulls the account-critical fields (points, reputation, admin flag)
+   from the real Supabase tables — these are the server-authoritative
+   source once a real backend is connected, separate from the kv-blob
+   profile which still holds the non-sensitive stuff (uploaded/purchased
+   lists, quiz history, focus log, etc — kept in kv per design). */
+async function fetchAccountData(authUserId){
+  if(!usingRealBackend) return {};
+  const [profileRes, pointsRes] = await Promise.all([
+    sb.from("profiles").select("*").eq("id", authUserId).maybeSingle(),
+    sb.from("reward_points").select("balance").eq("user_id", authUserId).maybeSingle()
+  ]);
+  const profile = profileRes.data;
+  return {
+    accountType: profile?.account_type,
+    reputation: profile?.reputation,
+    bio: profile?.bio,
+    streak: profile?.streak,
+    isAdminFlag: profile?.is_admin === true,
+    points: pointsRes.data ? pointsRes.data.balance : undefined
+  };
+}
+
+async function doLogin(){
+  const name = (document.getElementById("loginName").value || "").trim();
+  const cls = document.getElementById("loginClass").value;
+  const pass = document.getElementById("loginPass").value;
+  const ownerPass = document.getElementById("loginOwnerPass") ? document.getElementById("loginOwnerPass").value : "";
+  if(!name){ toast("Please enter your name."); return; }
+  if(!pass){ toast("Please enter your password."); return; }
+  let isOwner = resolveIsOwner(name, ownerPass);
+
+  const savedRaw = await Store.get(userKey(name));
+  if(!savedRaw && !usingRealBackend){ toast("No account found with that name yet — please sign up first."); nav("signup"); return; }
+  const saved = savedRaw ? JSON.parse(savedRaw) : null;
+  if(saved && saved.status==="suspended"){ toast("This account has been suspended by an admin."); return; }
+
+  if(usingRealBackend){
+    const { data: authData, error } = await sb.auth.signInWithPassword({ email: slugEmail(name), password: pass });
+    if(error){
+      if(!saved){ toast("No account found with that name yet — please sign up first."); nav("signup"); return; }
+      toast("Incorrect password."); return;
+    }
+    const authUserId = authData.user.id;
+    const acct = await fetchAccountData(authUserId);
+    isOwner = isOwner || acct.isAdminFlag;
+    const merged = mergeAccountData(saved, acct);
+    establishSession(name, cls, merged.board||saved?.board, merged, isOwner, {passwordHash:null, authUserId}, acct.accountType);
+    return;
+  }
+
+  // Offline fallback (no Supabase configured yet) — same as before, session-only.
+  if(!isOwner){
+    const hash = await hashPassword(pass);
+    if(hash !== saved.passwordHash){ toast("Incorrect password."); return; }
+  }
+  establishSession(name, cls, saved.board, saved, isOwner, {passwordHash: saved.passwordHash});
+}
+window.doLogin = doLogin;
+
+function mergeAccountData(kvSaved, acct){
+  const merged = {...(kvSaved||{})};
+  if(acct.accountType) merged.accountType = acct.accountType;
+  if(acct.reputation !== undefined && acct.reputation !== null) merged.reputation = acct.reputation;
+  if(acct.points !== undefined && acct.points !== null) merged.points = acct.points;
+  if(acct.bio !== undefined && acct.bio !== null) merged.bio = acct.bio;
+  if(acct.streak !== undefined && acct.streak !== null) merged.streak = acct.streak;
+  return merged;
+}
+
+async function doSignup(){
+  const name = (document.getElementById("signupName").value || "").trim();
+  const cls = document.getElementById("signupClass").value;
+  const board = document.getElementById("signupBoard").value;
+  const pass = document.getElementById("signupPass").value;
+  const accountType = document.querySelector('input[name="signupAccountType"]:checked')?.value || "student";
+  const ownerPass = document.getElementById("signupOwnerPass") ? document.getElementById("signupOwnerPass").value : "";
+  if(!name){ toast("Please enter your name."); return; }
+  if(!pass || pass.length<6){ toast("Please choose a password of at least 6 characters."); return; }
+  let isOwner = resolveIsOwner(name, ownerPass);
+
+  const savedRaw = await Store.get(userKey(name));
+  if(savedRaw && !isOwner && !usingRealBackend){ toast("An account with this name already exists — please log in instead."); nav("login"); return; }
+  const saved = savedRaw ? JSON.parse(savedRaw) : null;
+
+  if(usingRealBackend){
+    // The Supabase trigger reads name/account_type from this metadata and
+    // creates the profiles + reward_points rows automatically.
+    const { data: authData, error } = await sb.auth.signUp({
+      email: slugEmail(name), password: pass,
+      options: { data: { name, full_name: name, account_type: accountType } }
+    });
+    if(error){
+      if(/already registered|already exists/i.test(error.message)){ toast("An account with this name already exists — please log in instead."); nav("login"); return; }
+      toast("Signup failed: "+error.message); return;
+    }
+    const authUserId = authData.user.id;
+    // class/board aren't read by the trigger — set them right after.
+    if(cls || board){
+      await sb.from("profiles").update({ class: Number(cls)||9, board: board||"CBSE" }).eq("id", authUserId);
+    }
+    const acct = await fetchAccountData(authUserId);
+    isOwner = isOwner || acct.isAdminFlag;
+    const merged = mergeAccountData(saved, acct);
+    establishSession(name, cls, board, merged, isOwner, {passwordHash:null, authUserId}, accountType);
+    return;
+  }
+
+  // Offline fallback
+  const hash = await hashPassword(pass);
+  establishSession(name, cls, board, saved, isOwner, {passwordHash: hash}, accountType);
+}
+window.doSignup = doSignup;
+function logout(){ state.user=null; state.focus.active=false; state.subscription=null; state.myStore=null; state.myProducts=[]; clearInterval(state.focus.timer); if(usingRealBackend) sb.auth.signOut(); nav("landing"); }
+window.logout = logout;
+
+function toggleTheme(){
+  state.theme = state.theme==="dark"?"light":"dark";
+  document.documentElement.setAttribute("data-theme", state.theme);
+  renderThemeIcon();
+}
+window.toggleTheme = toggleTheme;
+
+async function purchase(resId){
+  const r = RESOURCES.find(x=>x.id===resId);
+  const u = state.user;
+  if(!u) return nav("login");
+  if(r.creatorId===u.id) return toast("You can't purchase your own resource.");
+  if(u.purchased.includes(resId)) return toast("Already in your library.");
+  if(u.points < r.price) return toast("Not enough Reward Points.");
+  if(usingRealBackend){
+    const { data: already } = await sb.from("resource_purchases").select("id").eq("resource_id",resId).eq("user_id",u._authUserId).maybeSingle();
+    if(already) return toast("Already in your library.");
+    const { data, error } = await sb.rpc("spend_reward_points", { target_user_id:u._authUserId, point_amount:r.price, point_reason:"Purchased: "+r.title });
+    if(error || data!==true){ toast("Purchase failed — points could not be deducted."); return; }
+    const { error: purchaseErr } = await sb.from("resource_purchases").insert({ resource_id:resId, user_id:u._authUserId });
+    if(purchaseErr){ console.error("resource_purchases insert failed:", purchaseErr); }
+    await sb.from("resources").update({ purchases: (r.purchases||0)+1 }).eq("id", resId);
+    u.points -= r.price;
+  } else {
+    u.points -= r.price;
+    addTx("Purchased: "+r.title, -r.price);
+  }
+  u.purchased.push(resId);
+  r.purchases += 1;
+  if(usingRealBackend) loadPointTransactions();
+  notify("Purchase complete", r.title+" added to your library.");
+  render();
+}
+window.purchase = purchase;
+
+async function redeemProduct(prodId){
+  const p = STORE_PRODUCTS.find(x=>x.id===prodId);
+  const u = state.user;
+  if(!u) return nav("login");
+  if(u.points < p.cost) return toast("Not enough Reward Points for this item.");
+  if(usingRealBackend){
+    const { data, error } = await sb.rpc("spend_reward_points", { target_user_id:u._authUserId, point_amount:p.cost, point_reason:"Redeemed: "+p.name });
+    if(error || data!==true){ toast("Redemption failed — points could not be deducted."); return; }
+    u.points -= p.cost;
+    loadPointTransactions();
+  } else {
+    u.points -= p.cost;
+    addTx("Redeemed: "+p.name, -p.cost);
+  }
+  u.redeemed.push({id:uid("rd"), productId:p.id, name:p.name, cost:p.cost, ts:Date.now()});
+  notify("Item redeemed!", p.name+" — our team will coordinate pickup/delivery.");
+  render();
+}
+window.redeemProduct = redeemProduct;
+
+/* ---------------- STORE OWNER MARKETPLACE ---------------- */
+async function loadMyStore(){
+  if(!usingRealBackend || !state.user?._authUserId) return;
+  const { data: store } = await sb.from("stores").select("*").eq("owner_id", state.user._authUserId).maybeSingle();
+  state.myStore = store || null;
+  if(store){
+    const { data: products } = await sb.from("products").select("*").eq("store_id", store.id).order("created_at",{ascending:false});
+    state.myProducts = products || [];
+  } else {
+    state.myProducts = [];
+  }
+  render();
+}
+window.loadMyStore = loadMyStore;
+
+async function saveStoreProfile(){
+  if(!usingRealBackend) return toast("Connect Supabase to save your store profile.");
+  const name = document.getElementById("storeName").value.trim();
+  const description = document.getElementById("storeDescription").value.trim();
+  const location = document.getElementById("storeLocation").value.trim();
+  const contact = document.getElementById("storeContact").value.trim();
+  if(!name) return toast("Please give your store a name.");
+  const row = { owner_id: state.user._authUserId, name, description, location, contact };
+  let result;
+  if(state.myStore){
+    result = await sb.from("stores").update(row).eq("id", state.myStore.id).select().maybeSingle();
+  } else {
+    result = await sb.from("stores").insert(row).select().maybeSingle();
+  }
+  if(result.error) return toast("Couldn't save store: "+result.error.message);
+  state.myStore = result.data;
+  const logoInput = document.getElementById("storeLogoFile");
+  const logoFile = logoInput && logoInput.files && logoInput.files[0];
+  if(logoFile){
+    toast("Uploading logo...");
+    const logoUrl = await uploadStoreLogo(state.myStore.id, logoFile);
+    if(logoUrl){
+      await sb.from("stores").update({ logo_url: logoUrl }).eq("id", state.myStore.id);
+      state.myStore.logo_url = logoUrl;
+    }
+  }
+  toast("Store profile saved.");
+  render();
+}
+window.saveStoreProfile = saveStoreProfile;
+
+async function addProduct(){
+  if(!usingRealBackend) return toast("Connect Supabase to add products.");
+  if(!state.myStore) return toast("Create your store profile first.");
+  const name = document.getElementById("prodName").value.trim();
+  const description = document.getElementById("prodDescription").value.trim();
+  const category = document.getElementById("prodCategory").value.trim() || "General";
+  const price = Number(document.getElementById("prodPrice").value)||0;
+  if(!name) return toast("Please name the product.");
+  const { data, error } = await sb.from("products").insert({ store_id: state.myStore.id, name, description, category, price, available:true }).select().maybeSingle();
+  if(error) return toast("Couldn't add product: "+error.message);
+  const imgInput = document.getElementById("prodImageFile");
+  const imgFile = imgInput && imgInput.files && imgInput.files[0];
+  if(imgFile && data){
+    toast("Uploading image...");
+    const imgUrl = await uploadProductImage(data.id, imgFile);
+    if(imgUrl) await sb.from("products").update({ image_url: imgUrl }).eq("id", data.id);
+  }
+  toast("Product added.");
+  document.getElementById("prodName").value=""; document.getElementById("prodDescription").value=""; document.getElementById("prodPrice").value="";
+  loadMyStore();
+}
+window.addProduct = addProduct;
+
+async function toggleProductAvailability(prodId, current){
+  const { error } = await sb.from("products").update({ available: !current }).eq("id", prodId);
+  if(error) return toast("Update failed: "+error.message);
+  loadMyStore();
+}
+window.toggleProductAvailability = toggleProductAvailability;
+
+async function deleteProduct(prodId){
+  const { error } = await sb.from("products").delete().eq("id", prodId);
+  if(error) return toast("Delete failed: "+error.message);
+  toast("Listing removed.");
+  loadMyStore();
+}
+window.deleteProduct = deleteProduct;
+
+async function loadStoreMarketplace(){
+  if(!usingRealBackend){ state.storeMarketAll = []; render(); return; }
+  const { data: products } = await sb.from("products").select("*, stores(name, location)").eq("available", true).order("created_at",{ascending:false});
+  state.storeMarketAll = products || [];
+  render();
+}
+window.loadStoreMarketplace = loadStoreMarketplace;
+
+/* ---------------- PREMIUM / PRICING / PROMO CODES ---------------- */
+async function loadPricing(){
+  if(!usingRealBackend) return;
+  const { data } = await sb.from("admin_config").select("value").eq("key","pricing").maybeSingle();
+  if(data?.value) state.pricing = data.value;
+}
+
+async function saveAdminPricing(){
+  if(!usingRealBackend) return toast("Connect Supabase to edit live pricing.");
+  const value = {
+    monthly_price_inr: Number(document.getElementById("cfgMonthlyPrice").value)||0,
+    yearly_price_inr: Number(document.getElementById("cfgYearlyPrice").value)||0,
+    monthly_rp: Number(document.getElementById("cfgMonthlyRp").value)||0,
+    yearly_rp: Number(document.getElementById("cfgYearlyRp").value)||0,
+    rp_per_rupee: Number(document.getElementById("cfgRpPerRupee").value)||5
+  };
+  const { error } = await sb.from("admin_config").upsert({ key:"pricing", value });
+  if(error) return toast("Save failed: "+error.message);
+  state.pricing = value;
+  toast("Pricing updated — live across the site now.");
+  render();
+}
+window.saveAdminPricing = saveAdminPricing;
+
+async function redeemPromoCode(){
+  toast("Promo codes aren't part of this database yet — ask your admin to add the promo_codes tables to enable this.");
+}
+window.redeemPromoCode = redeemPromoCode;
+
+async function loadPromoAdminData(){
+  // Not available in the current schema (no promo_codes/promo_code_redemptions tables).
+  state.promoCodes = [];
+  state.redemptions = [];
+  render();
+}
+window.loadPromoAdminData = loadPromoAdminData;
+
+async function createPromoCode(){
+  toast("Promo codes aren't part of this database yet — ask your admin to add the promo_codes tables to enable this.");
+}
+window.createPromoCode = createPromoCode;
+
+async function togglePromoActive(){ toast("Not available with the current database schema."); }
+window.togglePromoActive = togglePromoActive;
+
+async function deletePromoCode(){ toast("Not available with the current database schema."); }
+window.deletePromoCode = deletePromoCode;
+
+async function loadAdminStores(){
+  if(!usingRealBackend) return;
+  const { data } = await sb.from("stores").select("*, profiles(name)").order("created_at",{ascending:false});
+  state.adminStores = data || [];
+  render();
+}
+window.loadAdminStores = loadAdminStores;
+
+async function loadAdminSubs(){
+  // Not available in the current schema (no subscriptions/transactions tables).
+  state.adminSubs = [];
+  state.adminTx = [];
+  render();
+}
+window.loadAdminSubs = loadAdminSubs;
+
+function toggleSave(resId){
+  const u=state.user; if(!u) return nav("login");
+  const i = u.saved.indexOf(resId);
+  if(i>-1) u.saved.splice(i,1); else u.saved.push(resId);
+  render();
+}
+window.toggleSave = toggleSave;
+
+function reportItem(kind, id, title){
+  ADMIN_REPORTS.unshift({id:uid("rep"), kind, refId:id, title, reason:"Flagged by user", ts:Date.now(), status:"open"});
+  toast("Reported. Our moderators will review this.");
+}
+window.reportItem = reportItem;
+
+async function doAskDoubt(){
+  const title = document.getElementById("doubtTitle").value;
+  const body = document.getElementById("doubtBody").value;
+  if(!title.trim() || !body.trim()) return toast("Please add a title and description.");
+  const subject = document.getElementById("doubtSubject").value;
+  const chapter = document.getElementById("doubtChapter").value||"General";
+  if(usingRealBackend){
+    const { data, error } = await sb.from("doubts").insert({
+      title, subject, chapter, class: state.user.class, author_id: state.user._authUserId, body, views:0
+    }).select().maybeSingle();
+    if(error){ toast("Couldn't post doubt: "+error.message); return; }
+    DOUBTS.unshift({ id:data.id, title:data.title, subject:data.subject, chapter:data.chapter, class:data.class,
+      author:state.user.name, authorId:state.user._authUserId, body:data.body, views:0, createdAt:new Date(data.created_at).getTime(), answers:[] });
+    state.user.asked.push(data.id);
+    toast("Doubt posted!");
+    nav("doubtDetail",{id:data.id});
+    return;
+  }
+  const d = { id: uid("dbt"), title, subject, chapter, class: state.user.class, author: state.user.name, authorId: state.user.id, body, answers: [], views:0, createdAt: Date.now() };
+  DOUBTS.unshift(d);
+  state.user.asked.push(d.id);
+  toast("Doubt posted!");
+  nav("doubtDetail",{id:d.id});
+}
+window.doAskDoubt = doAskDoubt;
+
+async function submitAnswer(doubtId){
+  const el = document.getElementById("answerBody_"+doubtId);
+  const body = el ? el.value : "";
+  if(!body.trim()) return toast("Write an answer first.");
+  const d = DOUBTS.find(x=>x.id===doubtId);
+  if(usingRealBackend){
+    const { data, error } = await sb.from("doubt_answers").insert({
+      doubt_id: doubtId, author_id: state.user._authUserId, body, helpful:0, not_helpful:0, accepted:false
+    }).select().maybeSingle();
+    if(error){ toast("Couldn't post answer: "+error.message); return; }
+    d.answers.push({ id:data.id, author:state.user.name, authorId:state.user._authUserId, body, helpful:0, notHelpful:0, accepted:false, createdAt:new Date(data.created_at).getTime() });
+    state.user.answeredIds.push(doubtId);
+    const { data: granted, error: rpcErr } = await sb.rpc("add_reward_points", { target_user_id: state.user._authUserId, point_amount: ADMIN_CONFIG.answerReward, point_reason: "Answered a doubt" });
+    if(!rpcErr){ state.user.points += ADMIN_CONFIG.answerReward; state.user.reputation += 2; notify("Points earned", "+"+ADMIN_CONFIG.answerReward+" points for answering a doubt."); loadPointTransactions(); }
+    render();
+    return;
+  }
+  d.answers.push({id:uid("ans"), author:state.user.name, authorId:state.user.id, body, helpful:0, notHelpful:0, accepted:false, createdAt:Date.now()});
+  state.user.answeredIds.push(d.id);
+  state.user.reputation += 2;
+  const granted = grantPoints(ADMIN_CONFIG.answerReward, "Answered a doubt");
+  if(granted>0) notify("Points earned", "+"+granted+" points for answering a doubt.");
+  render();
+}
+window.submitAnswer = submitAnswer;
+
+async function acceptAnswer(doubtId, ansId){
+  const d = DOUBTS.find(x=>x.id===doubtId);
+  d.answers.forEach(a=>a.accepted = a.id===ansId);
+  const answer = d.answers.find(a=>a.id===ansId);
+  if(usingRealBackend && answer){
+    await sb.from("doubt_answers").update({ accepted:false }).eq("doubt_id", doubtId);
+    await sb.from("doubt_answers").update({ accepted:true }).eq("id", ansId);
+    if(answer.authorId){
+      const { error } = await sb.rpc("add_reward_points", { target_user_id: answer.authorId, point_amount: ADMIN_CONFIG.acceptedBonus, point_reason: "Answer accepted" });
+      if(!error){
+        if(answer.authorId === state.user._authUserId){ state.user.points += ADMIN_CONFIG.acceptedBonus; state.user.reputation += 5; loadPointTransactions(); }
+        notify("Answer accepted!", "The answerer received +"+ADMIN_CONFIG.acceptedBonus+" points.");
+      }
+      // Note: crediting the ANSWERER's reputation (when it isn't your own) has
+      // no secure path in this schema yet (RLS correctly blocks editing someone
+      // else's profile row, and there's no add_reputation()-style function) —
+      // so that specific +5 reputation is skipped for other users. Points still work.
+    }
+    render();
+    return;
+  }
+  if(state.user){
+    state.user.reputation += 5;
+    const granted = grantPoints(ADMIN_CONFIG.acceptedBonus, "Answer accepted bonus");
+    notify("Answer accepted!", "+"+granted+" points, +5 reputation.");
+  }
+  render();
+}
+window.acceptAnswer = acceptAnswer;
+
+async function markNotHelpful(doubtId, ansId){
+  const d = DOUBTS.find(x=>x.id===doubtId);
+  const a = d.answers.find(x=>x.id===ansId);
+  if(a.flaggedBy===state.user.id) return toast("You already flagged this answer.");
+  a.notHelpful = (a.notHelpful||0)+1;
+  a.flaggedBy = state.user.id;
+  if(usingRealBackend){
+    await sb.from("doubt_answers").update({ not_helpful: a.notHelpful }).eq("id", ansId);
+  }
+  if(a.authorId===state.user.id){
+    state.user.reputation = Math.max(0, state.user.reputation - ADMIN_CONFIG.notHelpfulPenalty);
+    notify("Reputation lowered", "An answer of yours was marked unhelpful (-"+ADMIN_CONFIG.notHelpfulPenalty+" reputation).");
+  } else {
+    toast("Marked as not helpful. Thanks for keeping quality high.");
+  }
+  render();
+}
+window.markNotHelpful = markNotHelpful;
+
+function sendChat(e){
+  if(e) e.preventDefault();
+  const input = document.getElementById("chatInput");
+  const text = input.value.trim();
+  if(!text) return;
+  state.chat.push({role:"user", text});
+  input.value="";
+  renderChatLog();
+  setTimeout(()=>{
+    const res = AIService.assistantReply(text, state.user);
+    state.chat.push({role:"ai", text:res.text, resources:res.resources});
+    renderChatLog();
+  }, 450);
+}
+window.sendChat = sendChat;
+function chipQuery(q){ document.getElementById("chatInput").value=q; sendChat(); }
+window.chipQuery = chipQuery;
+
+/* Focus mode */
+function startFocus(subject){
+  state.focus.active = true; state.focus.paused=false; state.focus.startedAt = Date.now(); state.focus.elapsed = 0; state.focus.subject = subject||"General";
+  clearInterval(state.focus.timer);
+  state.focus.timer = setInterval(()=>{ state.focus.elapsed = Date.now()-state.focus.startedAt; renderFocusTimerOnly(); }, 1000);
+  render();
+}
+window.startFocus = startFocus;
+function pauseFocus(){
+  if(!state.focus.active || state.focus.paused) return;
+  clearInterval(state.focus.timer);
+  state.focus.paused = true;
+  render();
+}
+window.pauseFocus = pauseFocus;
+function resumeFocus(){
+  if(!state.focus.active || !state.focus.paused) return;
+  state.focus.paused = false;
+  state.focus.startedAt = Date.now() - state.focus.elapsed;
+  state.focus.timer = setInterval(()=>{ state.focus.elapsed = Date.now()-state.focus.startedAt; renderFocusTimerOnly(); }, 1000);
+  render();
+}
+window.resumeFocus = resumeFocus;
+function endFocus(){
+  clearInterval(state.focus.timer);
+  const mins = Math.round(state.focus.elapsed/60000);
+  if(mins>0){
+    state.focus.log.push({date:new Date().toDateString(), minutes:mins, subject:state.focus.subject});
+    notify("Focus session logged", mins+" minutes of "+state.focus.subject+" recorded.");
+  }
+  state.focus.active=false; state.focus.paused=false; state.focus.elapsed=0;
+  render();
+}
+window.endFocus = endFocus;
+function resetFocusSession(reasonMsg){
+  clearInterval(state.focus.timer);
+  state.focus.active=false; state.focus.paused=false; state.focus.elapsed=0;
+  if(reasonMsg) notify("Focus session reset", reasonMsg);
+}
+
+/* ---------------- FACECAM RECORDING ----------------
+   Everything here stays 100% local to the student's own browser.
+   No network request is ever made with this video — it is recorded
+   into memory, and the ONLY way it leaves the browser is if the
+   student themselves clicks "Download" to save it to their own device.
+   We (the site) never see, store, or receive this footage. */
+let facecamStream = null;
+let facecamRecorder = null;
+let facecamChunks = [];
+
+async function startFacecam(){
+  if(!navigator.mediaDevices || !window.MediaRecorder){
+    toast("Your browser doesn't support camera recording.");
+    return;
+  }
+  if(state.facecamDownloadUrl){ URL.revokeObjectURL(state.facecamDownloadUrl); state.facecamDownloadUrl = null; }
+  try{
+    facecamStream = await navigator.mediaDevices.getUserMedia({ video:true, audio:true });
+  } catch(err){
+    toast("Camera/microphone access was denied or unavailable.");
+    return;
+  }
+  facecamChunks = [];
+  try{
+    facecamRecorder = new MediaRecorder(facecamStream);
+  } catch(err){
+    facecamRecorder = new MediaRecorder(facecamStream, { mimeType: "video/webm" });
+  }
+  facecamRecorder.ondataavailable = e => { if(e.data && e.data.size>0) facecamChunks.push(e.data); };
+  facecamRecorder.start();
+  state.facecamActive = true;
+  render();
+}
+window.startFacecam = startFacecam;
+
+function stopFacecam(){
+  if(facecamRecorder && facecamRecorder.state !== "inactive"){
+    facecamRecorder.onstop = () => {
+      const blob = new Blob(facecamChunks, { type: "video/webm" });
+      state.facecamDownloadUrl = URL.createObjectURL(blob);
+      state.facecamActive = false;
+      render();
+    };
+    facecamRecorder.stop();
+  } else {
+    state.facecamActive = false;
+    render();
+  }
+  if(facecamStream){ facecamStream.getTracks().forEach(t=>t.stop()); facecamStream = null; }
+}
+window.stopFacecam = stopFacecam;
+
+document.addEventListener("visibilitychange", ()=>{
+  if(document.hidden && state.focus.active){
+    resetFocusSession("You left the tab, so the session wasn't counted. Stay on VidyaLoop to keep your timer running.");
+    if(state.route==="focus") render();
+  }
+});
+window.addEventListener("beforeunload", (e)=>{
+  if(state.focus.active){ e.preventDefault(); e.returnValue=""; }
+});
+
+/* Seller upload */
+let _pickedFile = null; // the raw File object, kept until upload completes
+const MAX_UPLOAD_BYTES = 3 * 1024 * 1024; // 3MB
+
+function onUploadFilePicked(input){
+  const file = input.files && input.files[0];
+  const label = document.getElementById("uploadFileLabel");
+  if(!file) return;
+  if(file.size > MAX_UPLOAD_BYTES){
+    toast("That file is too large (max 3MB). Please choose a smaller file.");
+    input.value = ""; _pickedFile = null;
+    if(label) label.textContent = "📎 Click to choose a PDF or image file";
+    return;
+  }
+  _pickedFile = file;
+  if(label) label.textContent = "✅ "+file.name+" ("+Math.round(file.size/1024)+" KB) — click to change";
+}
+window.onUploadFilePicked = onUploadFilePicked;
+
+async function doUploadResource(){
+  const title = document.getElementById("uploadTitle").value;
+  const description = document.getElementById("uploadDescription").value;
+  const chapter = document.getElementById("uploadChapter").value;
+  if(!title.trim() || !description.trim()) return toast("Please add a title and description.");
+  if(!chapter.trim()) return toast("Please add the chapter/topic this resource covers.");
+  const payload = { title, description, chapter, type:document.getElementById("uploadType").value, subject:document.getElementById("uploadSubject").value, pages:Number(document.getElementById("uploadPages").value)||6, class:Number(document.getElementById("uploadClass").value) };
+  const evalResult = AIService.evaluateResource(payload);
+  const status = evalResult.score>=ADMIN_CONFIG.autoApproveThreshold ? "pending" : "needs_improvement";
+
+  if(usingRealBackend){
+    const row = {
+      title: payload.title, creator_id: state.user._authUserId, class: payload.class, board: state.user.board,
+      subject: payload.subject, chapter: payload.chapter, type: payload.type, description: payload.description,
+      pages: payload.pages, ai_score: evalResult.score, rating:0, num_ratings:0, purchases:0,
+      price: evalResult.price, status, pros: evalResult.strengths, cons: evalResult.weaknesses,
+      covers: [payload.chapter], ai_confidence: evalResult.confidence, has_file:false
+    };
+    const { data, error } = await sb.from("resources").insert(row).select().maybeSingle();
+    if(error){ toast("Couldn't save resource: "+error.message); return; }
+    const res = mapDbResource({...data, profiles:{name:state.user.name}});
+    if(_pickedFile){
+      toast("Uploading file...");
+      try{
+        const fileUrl = await uploadFileToStorage(data.id, _pickedFile);
+        if(fileUrl){
+          await sb.from("resources").update({ has_file:true, file_name:_pickedFile.name, file_type:_pickedFile.type, file_url:fileUrl }).eq("id", data.id);
+          res.hasFile = true; res.fileName = _pickedFile.name; res.fileType = _pickedFile.type; res.fileUrl = fileUrl;
+        }
+      }catch(e){ toast("File upload failed — resource saved without the file."); }
+      _pickedFile = null;
+    }
+    state.user.uploaded.push(res.id);
+    RESOURCES.unshift(res);
+    if(res.status==="pending") ADMIN_PENDING.unshift({...res});
+    nav("sellerResult",{id:res.id});
+    return;
+  }
+
+  // Offline fallback
+  const res = {
+    id: uid("res"), title: payload.title, creator: state.user.name, creatorId: state.user.id,
+    class: payload.class, board: state.user.board, subject: payload.subject, chapter: payload.chapter,
+    type: payload.type, description: payload.description, pages: payload.pages,
+    aiScore: evalResult.score, rating:0, numRatings:0, purchases:0,
+    price: evalResult.price, recommendedPrice: evalResult.price,
+    status, pros: evalResult.strengths, cons: evalResult.weaknesses,
+    covers: [payload.chapter], createdAt: Date.now(), aiConfidence: evalResult.confidence,
+    hasFile: !!_pickedFile, fileName: _pickedFile?.name || null, fileType: _pickedFile?.type || null, fileUrl: null
+  };
+  if(_pickedFile){
+    toast("File attached (visible only in this offline session — connect Supabase for real storage).");
+    _pickedFile = null;
+  }
+  state.user.uploaded.push(res.id);
+  RESOURCES.unshift(res);
+  if(res.status==="pending") ADMIN_PENDING.unshift({...res});
+  nav("sellerResult",{id:res.id});
+  persistCatalog();
+}
+window.doUploadResource = doUploadResource;
+
+async function adminApprove(id, approve){
+  const idx = ADMIN_PENDING.findIndex(r=>r.id===id);
+  if(idx>-1){
+    const item = ADMIN_PENDING[idx];
+    const master = RESOURCES.find(r=>r.id===id);
+    const newStatus = approve?"approved":"rejected";
+    if(master) master.status = newStatus;
+    ADMIN_PENDING.splice(idx,1);
+    if(usingRealBackend){
+      const { error } = await sb.from("resources").update({ status:newStatus }).eq("id", id);
+      if(error){ toast("Couldn't update resource status: "+error.message); return; }
+    }
+    if(!approve && state.user && master && master.creatorId===state.user.id){
+      state.user.reputation = Math.max(0, state.user.reputation - ADMIN_CONFIG.reportPenalty);
+      notify("Resource rejected", "\""+master.title+"\" was rejected by moderation (-"+ADMIN_CONFIG.reportPenalty+" reputation).");
+    }
+    toast(approve? "Resource approved" : "Resource rejected");
+    render();
+  }
+}
+window.adminApprove = adminApprove;
+function adminResolveReport(id, penalize){
+  const r = ADMIN_REPORTS.find(x=>x.id===id); if(!r) return;
+  r.status="resolved";
+  if(penalize && r.kind==="resource" && state.user){
+    const res = RESOURCES.find(x=>x.id===r.refId);
+    if(res && res.creatorId===state.user.id){
+      state.user.reputation = Math.max(0, state.user.reputation - ADMIN_CONFIG.reportPenalty);
+      notify("Reputation lowered", "A report against your resource was upheld (-"+ADMIN_CONFIG.reportPenalty+" reputation).");
+    }
+  }
+  toast("Report marked resolved.");
+  render();
+}
+window.adminResolveReport = adminResolveReport;
+async function submitReview(resId, rating){
+  const u = state.user;
+  if(!u.purchased.includes(resId)) return toast("Purchase this resource before reviewing it.");
+  if(u.ratedResources.includes(resId)) return toast("You've already reviewed this resource.");
+  const textEl = document.getElementById("reviewText_"+resId);
+  const text = textEl ? textEl.value.trim() : "";
+  const r = RESOURCES.find(x=>x.id===resId);
+  const totalPoints = r.rating * r.numRatings + rating;
+  const newNumRatings = r.numRatings + 1;
+  const newRating = Number((totalPoints / newNumRatings).toFixed(1));
+
+  if(usingRealBackend){
+    const { data: already } = await sb.from("resource_reviews").select("id").eq("resource_id",resId).eq("user_id",u._authUserId).maybeSingle();
+    if(already) return toast("You've already reviewed this resource.");
+    const { error: revErr } = await sb.from("resource_reviews").insert({ resource_id:resId, user_id:u._authUserId, rating, text });
+    if(revErr){ toast("Couldn't save review: "+revErr.message); return; }
+    const { error: updErr } = await sb.from("resources").update({ rating:newRating, num_ratings:newNumRatings }).eq("id", resId);
+    if(updErr) console.error("resource rating update failed:", updErr);
+    if(!REVIEWS[resId]) REVIEWS[resId] = [];
+    REVIEWS[resId].unshift({userId:u._authUserId, userName:u.name, rating, text, ts:Date.now()});
+  } else {
+    if(!REVIEWS[resId]) REVIEWS[resId] = [];
+    REVIEWS[resId].unshift({userId:u.id, userName:u.name, rating, text, ts:Date.now()});
+  }
+  r.numRatings = newNumRatings;
+  r.rating = newRating;
+  u.ratedResources.push(resId);
+  toast("Thanks for your review!");
+  render();
+}
+window.submitReview = submitReview;
+
+async function loadResourceReviews(resId){
+  if(!usingRealBackend) return;
+  const { data, error } = await sb.from("resource_reviews").select("*, profiles(name)").eq("resource_id", resId).order("created_at",{ascending:false});
+  if(error){ console.error("loadResourceReviews failed:", error); return; }
+  REVIEWS[resId] = (data||[]).map(rv=>({ userId:rv.user_id, userName:rv.profiles?.name||"Student", rating:rv.rating, text:rv.text, ts:new Date(rv.created_at).getTime() }));
+  render();
+}
+window.loadResourceReviews = loadResourceReviews;
+function selectStar(resId, n){
+  state.pendingRating = state.pendingRating||{};
+  state.pendingRating[resId] = n;
+  render();
+}
+window.selectStar = selectStar;
+
+function updateConfig(key, value){
+  ADMIN_CONFIG[key] = Number(value)||0;
+  toast(key+" updated to "+ADMIN_CONFIG[key]);
+}
+window.updateConfig = updateConfig;
+async function adminToggleUser(name){
+  const raw = await Store.get(userKey(name), true);
+  if(raw){
+    try{
+      const rec = JSON.parse(raw);
+      rec.status = rec.status==="active" ? "suspended" : "active";
+      await Store.set(userKey(name), JSON.stringify(rec), true);
+    }catch(e){}
+  }
+  loadAllUsers();
+}
+window.adminToggleUser = adminToggleUser;
+
+/* Quiz */
+function startQuiz(resId, count, difficulty){
+  const r = RESOURCES.find(x=>x.id===resId);
+  const qs = AIService.generateQuiz(r, Number(count));
+  state.quiz = { resourceId:resId, questions:qs, answers:{}, submitted:false, difficulty };
+  nav("quizTake",{id:resId});
+}
+window.startQuiz = startQuiz;
+function selectQuizAnswer(qid, optIdx){
+  if(state.quiz.submitted) return;
+  state.quiz.answers[qid]=optIdx; renderQuizTake();
+}
+window.selectQuizAnswer = selectQuizAnswer;
+function submitQuiz(){
+  state.quiz.submitted = true;
+  const qs = state.quiz.questions;
+  let correct=0; const weak={};
+  qs.forEach(q=>{
+    const chosen = state.quiz.answers[q.id];
+    if(chosen===q.correct) correct++;
+    else weak[q.topic]=(weak[q.topic]||0)+1;
+  });
+  state.quiz.score = Math.round(correct/qs.length*100);
+  state.quiz.weak = Object.keys(weak).sort((a,b)=>weak[b]-weak[a]);
+  state.user.quizHistory.unshift({id:uid("qz"), resourceId:state.quiz.resourceId, score:state.quiz.score, ts:Date.now(), weak:state.quiz.weak});
+  notify("Quiz complete", "You scored "+state.quiz.score+"%.");
+  nav("quizResult",{id:state.quiz.resourceId});
+}
+window.submitQuiz = submitQuiz;
+
+function toggleNotif(){ state.notifOpen=!state.notifOpen; if(state.notifOpen) state.notifications.forEach(n=>n.read=true); renderNavOnly(); }
+window.toggleNotif = toggleNotif;
+
+function doGlobalSearch(){
+  const val = document.getElementById("globalSearch").value;
+  state.search = val;
+  nav("search");
+}
+window.doGlobalSearch = doGlobalSearch;
+
+/* ---------------- RENDER HELPERS ---------------- */
+function fmtTime(ms){
+  const s = Math.floor(ms/1000);
+  const m = String(Math.floor(s/60)).padStart(2,"0");
+  const sec = String(s%60).padStart(2,"0");
+  return m+":"+sec;
+}
+function stars(rating){
+  const full = Math.round(rating);
+  return "★".repeat(full)+"☆".repeat(5-full);
+}
+function resCard(r){
+  const owned = state.user?.purchased.includes(r.id);
+  const saved = state.user?.saved.includes(r.id);
+  return `<div class="card card-hover rescard" onclick="nav('resource',{id:'${r.id}'})">
+    <div class="thumb">${iconFor(r.subject)}</div>
+    <div class="meta"><span class="tag tag-violet">${r.subject}</span><span class="tag tag-muted">Class ${r.class}</span><span class="tag tag-cyan">${r.type}</span></div>
+    <h4>${r.title}</h4>
+    <div class="small muted">${r.pages} pages · by ${r.creator}</div>
+    <div class="foot">
+      <div><span class="score" style="color:${scoreColor(r.aiScore)}">${r.aiScore}</span><span class="small muted">/100 · </span><span class="stars">${stars(r.rating)}</span></div>
+      <div class="mono" style="font-weight:700;">${r.price} pts</div>
+    </div>
+    ${owned?`<span class="tag tag-green" style="align-self:flex-start;">In Library</span>`:""}
+  </div>`;
+}
+function scoreColor(s){ return s>=85?"var(--green)": s>=70?"var(--cyan)":"var(--amber)"; }
+function iconFor(subject){
+  return {Mathematics:"∑",Physics:"⚛",Chemistry:"⚗",Biology:"🧬",English:"📖","Social Science":"🌍"}[subject]||"📄";
+}
+
+/* ---------------- VIEWS ---------------- */
+function navBar(){
+  const u = state.user;
+  let links;
+  if(u && u.accountType==="store_owner"){
+    links = [
+      ["storeDashboard","Store Dashboard"],["storeMarketplace","Marketplace"],
+      ["storeOrders","Orders"],["profile","Profile"]
+    ];
+  } else {
+    links = [
+      ["dashboard","Home"],["marketplace","Marketplace"],["doubts","Doubts"],["assistant","AI Assistant"],
+      ["focus","Focus"],["library","My Library"],["storeMarketplace","Store"],["store","Redeem"],["seller","Sell"],["premium","Premium"]
+    ];
+  }
+  if(u && u.isOwner) links.push(["admin","Admin"]);
+  const unread = state.notifications.filter(n=>!n.read).length;
+  return `<div class="navbar"><div class="navinner">
+    <div class="brand" onclick="nav('${u?"dashboard":"landing"}')">${loopIcon(28)} VidyaLoop</div>
+    ${u? `<div class="navlinks">${links.map(([r,l])=>`<button class="${state.route===r?'active':''}" onclick="${r==='storeMarketplace'?"nav('storeMarketplace'); loadStoreMarketplace();":"nav('"+r+"')"}">${l}</button>`).join("")}</div>` : `<div style="flex:1"></div>`}
+    <div class="navright">
+      ${u? `<div class="searchbox"><span>🔎</span><input id="globalSearch" placeholder="Search notes, doubts..." value="${state.search||""}" onkeydown="if(event.key==='Enter') doGlobalSearch()"></div>` : ""}
+      ${u? `<div class="stat-pill">✦ <span class="mono">${u.points}</span></div><div class="stat-pill">⬤ <span class="mono">${u.reputation}</span></div>` : ""}
+      <button class="iconbtn" onclick="toggleTheme()" id="themeIcon">${state.theme==="dark"?"☀️":"🌙"}</button>
+      ${u? `<div style="position:relative;">
+        <button class="iconbtn" onclick="toggleNotif()">🔔${unread?`<span class="badgeDot">${unread}</span>`:""}</button>
+        <div class="dropdown ${state.notifOpen?"open":""}">${state.notifications.length? state.notifications.map(n=>`<div class="dropdown-item"><div class="t">${n.title}</div><div class="d">${n.desc} · ${timeAgo(n.ts)}</div></div>`).join(""):`<div class="dropdown-item d">No notifications yet.</div>`}</div>
+      </div>
+      <div class="avatar" style="background:${u.avatarColor}" onclick="nav('profile')">${initials(u.name)}</div>` :
+      (["login","signup"].includes(state.route) ? `<button class="btn btn-ghost btn-sm" onclick="nav('landing')">← Home</button>` :
+      `<button class="btn btn-outline btn-sm" onclick="nav('login')">Log in</button><button class="btn btn-primary btn-sm" onclick="nav('signup')">Sign up</button>`)}
+    </div>
+  </div></div>`;
+}
+function renderThemeIcon(){ const el=document.getElementById("themeIcon"); if(el) el.textContent = state.theme==="dark"?"☀️":"🌙"; }
+function renderNavOnly(){ const nb=document.querySelector('.navbar'); if(nb){ const t=document.createElement('div'); t.innerHTML=navBar(); nb.replaceWith(t.firstChild); } }
+
+function loopIcon(size){
+  return `<svg width="${size}" height="${size}" viewBox="0 0 40 40" class="ring"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="var(--violet)"/><stop offset="55%" stop-color="var(--pink)"/><stop offset="100%" stop-color="var(--cyan)"/></linearGradient></defs><circle cx="20" cy="20" r="16" fill="none" stroke="url(#lg)" stroke-width="3.4" stroke-linecap="round" stroke-dasharray="80 20"/><circle cx="20" cy="20" r="5" fill="url(#lg)"/></svg>`;
+}
+
+function viewLanding(){
+  const loop = [["✏️","Create"],["📤","Share"],["🤝","Help"],["✦","Earn"],["📚","Learn"],["📈","Improve"]];
+  return `${navBar()}
+  <div class="pagewrap">
+  <div class="wrap hero">
+    <div class="eyebrow">A Tinkerpreneur project</div>
+    <h1>Students don't just consume education.<br><span class="grad">They create it, share it, earn from it.</span></h1>
+    <p>VidyaLoop is a peer-powered learning marketplace: upload notes, get an AI quality score and fair price, solve classmates' doubts for Reward Points, and turn your knowledge into a real academic reputation.</p>
+    <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap;">
+      <button class="btn btn-primary" onclick="nav('signup')">Get started free</button>
+      <button class="btn btn-outline" onclick="nav('marketplace')">Browse the marketplace</button>
+    </div>
+    <div class="loopdiagram">
+      ${loop.map(([ic,l],i)=>`<div class="loopnode"><div class="dot">${ic}</div><span>${l}</span></div>${i<loop.length-1?'<div class="loopchevron">→</div>':''}`).join("")}
+    </div>
+  </div>
+  <div class="wrap" style="margin-top:70px;">
+    <div class="grid cols-3">
+      <div class="card"><div class="eyebrow">01 · Marketplace</div><h3 style="margin-bottom:8px;">AI-priced notes, not guesswork</h3><p class="muted small">Every upload gets an AI quality score and a fair, capped Reward Point price — so nobody overpays and good work gets recognised.</p></div>
+      <div class="card"><div class="eyebrow">02 · Community</div><h3 style="margin-bottom:8px;">Doubts solved by peers</h3><p class="muted small">Ask a question, get help from other students, and earn points and reputation for genuinely useful answers.</p></div>
+      <div class="card"><div class="eyebrow">03 · Focus</div><h3 style="margin-bottom:8px;">Study time you can see</h3><p class="muted small">Track focus sessions, generate AI quizzes from your notes, and see exactly where to revise next.</p></div>
+    </div>
+  </div>
+  <div class="wrap" style="margin-top:50px;">
+    <div class="trust">⚠️ <div>AI scores and prices are <b>recommendations</b>, not guarantees — always check the preview and student ratings. Only original, authorised content may be uploaded; report anything that looks copied or copyrighted.</div></div>
+  </div>
+  </div>
+  ${footer()}`;
+}
+
+function footer(){
+  return `<div class="footerbar">VidyaLoop — a student-built Tinkerpreneur MVP. ${usingRealBackend? '<span style="color:var(--green);">● Connected to Supabase — accounts, notes and progress are saved for real.</span>' : '<span style="color:var(--amber);">● Offline demo mode — connect Supabase to save data permanently.</span>'}</div>`;
+}
+
+function viewLogin(){
+  return `${navBar()}<div class="authwrap"><div class="card authcard">
+    <div style="text-align:center; margin-bottom:6px;">${loopIcon(40)}</div>
+    <h2 style="text-align:center; margin-bottom:4px;">Welcome back</h2>
+    <p class="muted small" style="text-align:center; margin-bottom:22px;">Log in to continue your learning loop.</p>
+    <div class="field"><label>Full name</label><input id="loginName" placeholder="e.g. Aarav Sharma" oninput="checkOwnerReveal('login')" onkeydown="if(event.key==='Enter') doLogin()"></div>
+    <input id="loginClass" type="hidden" value="9">
+    <div class="field"><label>Password</label><input id="loginPass" type="password" placeholder="Your password" onkeydown="if(event.key==='Enter') doLogin()"></div>
+    <div id="loginOwnerWrap" style="display:none;"><div class="field"><label>Owner passcode</label><input id="loginOwnerPass" type="password" placeholder="Owner passcode" onkeydown="if(event.key==='Enter') doLogin()"></div></div>
+    <button class="btn btn-primary btn-block" type="button" onclick="doLogin()">Log in</button>
+    <p class="small muted" style="text-align:center; margin-top:16px;">Don't have an account yet? <a href="#" onclick="event.preventDefault(); nav('signup')" style="color:var(--violet2); font-weight:600;">Sign up</a></p>
+  </div></div>`;
+}
+function viewSignup(){
+  return `${navBar()}<div class="authwrap"><div class="card authcard">
+    <div style="text-align:center; margin-bottom:6px;">${loopIcon(40)}</div>
+    <h2 style="text-align:center; margin-bottom:4px;">Create your account</h2>
+    <p class="muted small" style="text-align:center; margin-bottom:22px;">Join the loop — create, help, and earn.</p>
+    <div class="field"><label>Full name</label><input id="signupName" placeholder="e.g. Meera Iyer" oninput="checkOwnerReveal('signup')"></div>
+    <div class="field">
+      <label>I am signing up as</label>
+      <div style="display:flex; gap:10px;">
+        <label style="flex:1; display:flex; align-items:center; gap:8px; border:1px solid var(--border); border-radius:10px; padding:11px 13px; cursor:pointer;"><input type="radio" name="signupAccountType" value="student" checked> Student</label>
+        <label style="flex:1; display:flex; align-items:center; gap:8px; border:1px solid var(--border); border-radius:10px; padding:11px 13px; cursor:pointer;"><input type="radio" name="signupAccountType" value="store_owner"> Store Owner</label>
+      </div>
+    </div>
+    <div class="formrow">
+      <div class="field"><label>Class</label><select id="signupClass">${CLASSES.map(c=>`<option value="${c}">Class ${c}</option>`).join("")}</select></div>
+      <div class="field"><label>Board</label><select id="signupBoard"><option>CBSE</option><option>ICSE</option><option>State Board</option></select></div>
+    </div>
+    <div class="field"><label>Email</label><input id="signupEmail" type="email" placeholder="you@school.edu"></div>
+    <div id="signupOwnerWrap" style="display:none;"><div class="field"><label>Owner passcode</label><input id="signupOwnerPass" type="password" placeholder="Owner passcode" onkeydown="if(event.key==='Enter') doSignup()"></div></div>
+    <div class="field"><label>Password</label><input id="signupPass" type="password" placeholder="Create a password" onkeydown="if(event.key==='Enter') doSignup()"></div>
+    <button class="btn btn-primary btn-block" type="button" onclick="doSignup()">Create account</button>
+    <p class="small muted" style="text-align:center; margin-top:16px;">We only collect what's needed to personalise your dashboard. <a href="#" onclick="event.preventDefault(); nav('login')" style="color:var(--violet2); font-weight:600;">Already have an account?</a></p>
+  </div></div>`;
+}
+
+function viewDashboard(){
+  const u = state.user;
+  const recommended = RESOURCES.filter(r=>r.status==="approved").slice(0,4);
+  const recentDoubts = DOUBTS.slice(0,4);
+  const quick = [
+    ["🔍","Find Notes","marketplace"],["⬆️","Upload Notes","seller"],["❓","Ask a Doubt","askDoubt"],
+    ["🤝","Answer Doubts","doubts"],["⏱️","Focus Mode","focus"],["📝","Take a Quiz","marketplace"]
+  ];
+  return `${navBar()}<div class="pagewrap"><div class="wrap">
+    <div class="section-title"><div><h2>Welcome back, ${u.name.split(" ")[0]} 👋</h2><p class="muted small">Class ${u.class} · ${u.board} · ${u.streak}-day streak 🔥</p></div></div>
+    <div class="grid cols-4" style="margin-bottom:22px;">
+      <div class="card statbig"><div class="ic" style="background:rgba(139,92,246,.15); color:var(--violet2);">✦</div><div><div class="n">${u.points}</div><div class="l">Reward Points</div></div></div>
+      <div class="card statbig"><div class="ic" style="background:rgba(34,211,238,.15); color:var(--cyan);">⬤</div><div><div class="n">${u.reputation}</div><div class="l">Reputation Score</div></div></div>
+      <div class="card statbig"><div class="ic" style="background:rgba(255,176,32,.15); color:var(--amber);">⏱️</div><div><div class="n">${state.focus.log.filter(l=>l.date===new Date().toDateString()).reduce((a,b)=>a+b.minutes,0)}m</div><div class="l">Focus time today</div></div></div>
+      <div class="card statbig"><div class="ic" style="background:rgba(52,211,153,.15); color:var(--green);">🏅</div><div><div class="n">${u.level}</div><div class="l">${u.badges.length} badges earned</div></div></div>
+    </div>
+    <div class="section-title"><h2>Quick actions</h2></div>
+    <div class="quickgrid" style="margin-bottom:28px;">
+      ${quick.map(([ic,l,r])=>`<button class="card card-hover qbtn" onclick="${r==='askDoubt'?"nav('doubts',{compose:true})":"nav('"+r+"')"}"><span class="ic">${ic}</span>${l}</button>`).join("")}
+    </div>
+    <div class="rdgrid">
+      <div>
+        <div class="section-title"><h2>Recommended for you</h2><button class="btn btn-ghost btn-sm" onclick="nav('marketplace')">See all →</button></div>
+        ${recommended.length? `<div class="grid cols-2">${recommended.map(resCard).join("")}</div>` : `<div class="card empty"><div class="ic">📭</div>No notes uploaded yet.<br><span class="small">Be the first — <a href="#" onclick="event.preventDefault(); nav('sellerUpload')" style="color:var(--violet2); font-weight:600;">upload a resource</a>.</span></div>`}
+      </div>
+      <div>
+        <div class="section-title"><h2>Recent doubts</h2><button class="btn btn-ghost btn-sm" onclick="nav('doubts')">See all →</button></div>
+        <div class="card">${recentDoubts.map(d=>`<div style="padding:10px 0; border-bottom:1px solid var(--border); cursor:pointer;" onclick="nav('doubtDetail',{id:'${d.id}'})"><div style="font-weight:600; font-size:13.5px;">${d.title}</div><div class="small muted">${d.subject} · ${d.answers.length} answers · ${timeAgo(d.createdAt)}</div></div>`).join("")}</div>
+        <div class="card" style="margin-top:16px;">
+          <div style="font-weight:700; margin-bottom:8px;">🤖 Ask VidyaLoop AI</div>
+          <p class="small muted" style="margin-bottom:12px;">"Find the best Class 9 Physics notes under 60 points"</p>
+          <button class="btn btn-outline btn-block btn-sm" onclick="nav('assistant')">Open AI Assistant</button>
+        </div>
+      </div>
+    </div>
+  </div></div>${footer()}`;
+}
+
+function viewMarketplace(){
+  const q = state.search?.toLowerCase()||"";
+  let list = RESOURCES.filter(r=>r.status==="approved");
+  const f = state.marketFilter || {};
+  if(f.subject) list = list.filter(r=>r.subject===f.subject);
+  if(f.class) list = list.filter(r=>r.class===Number(f.class));
+  if(f.sort==="price") list.sort((a,b)=>a.price-b.price);
+  else if(f.sort==="rating") list.sort((a,b)=>b.rating-a.rating);
+  else if(f.sort==="newest") list.sort((a,b)=>b.createdAt-a.createdAt);
+  else list.sort((a,b)=>b.aiScore-a.aiScore);
+  if(q) list = list.filter(r=> r.title.toLowerCase().includes(q)||r.subject.toLowerCase().includes(q)||r.chapter.toLowerCase().includes(q));
+  return `${navBar()}<div class="pagewrap"><div class="wrap">
+    <div class="section-title"><h2>Marketplace</h2><span class="muted small">${list.length} resources</span></div>
+    <div class="filterbar">
+      <select onchange="state.marketFilter={...state.marketFilter,subject:this.value||null}; render();"><option value="">All subjects</option>${SUBJECTS.map(s=>`<option ${f.subject===s?"selected":""}>${s}</option>`).join("")}</select>
+      <select onchange="state.marketFilter={...state.marketFilter,class:this.value||null}; render();"><option value="">All classes</option>${CLASSES.map(c=>`<option value="${c}" ${f.class==c?"selected":""}>Class ${c}</option>`).join("")}</select>
+      <select onchange="state.marketFilter={...state.marketFilter,sort:this.value}; render();">
+        <option value="score" ${f.sort==="score"?"selected":""}>Best AI score</option>
+        <option value="rating" ${f.sort==="rating"?"selected":""}>Best rated</option>
+        <option value="price" ${f.sort==="price"?"selected":""}>Lowest price</option>
+        <option value="newest" ${f.sort==="newest"?"selected":""}>Newest</option>
+      </select>
+      ${q?`<button class="btn btn-outline btn-sm" onclick="state.search=''; render();">Clear search "${state.search}" ✕</button>`:""}
+    </div>
+    ${list.length? `<div class="grid cols-3">${list.map(resCard).join("")}</div>` : `<div class="empty"><div class="ic">🗂️</div>No resources match these filters yet.</div>`}
+  </div></div>${footer()}`;
+}
+
+function viewResource(id){
+  const r = RESOURCES.find(x=>x.id===id);
+  if(!r) return viewMarketplace();
+  const u = state.user;
+  const owned = u?.purchased.includes(id);
+  const isOwn = u?.id===r.creatorId;
+  if(u){
+    u.recentlyViewed = [id, ...u.recentlyViewed.filter(x=>x!==id)].slice(0,8);
+  }
+  const sampleCount = Math.min(4, r.pages);
+  const samplePages = Array.from({length:sampleCount},()=>randInt(1,r.pages)).sort((a,b)=>a-b);
+  const reviews = REVIEWS[id]||[];
+  if(usingRealBackend && state._reviewsLoadedFor!==id){
+    state._reviewsLoadedFor = id;
+    loadResourceReviews(id);
+  }
+  const hasRated = u?.ratedResources.includes(id);
+  const pendingStar = (state.pendingRating && state.pendingRating[id]) || 5;
+  return `${navBar()}<div class="pagewrap"><div class="wrap">
+    <button class="btn btn-ghost btn-sm" style="margin-bottom:14px;" onclick="nav('marketplace')">← Back to marketplace</button>
+    <div class="rdgrid">
+      <div>
+        <div class="meta" style="margin-bottom:10px;"><span class="tag tag-violet">${r.subject}</span><span class="tag tag-muted">Class ${r.class} · ${r.board}</span><span class="tag tag-cyan">${r.type}</span></div>
+        <h2 style="font-size:26px; margin-bottom:6px;">${r.title}</h2>
+        <p class="muted small">by ${r.creator} · ${r.chapter} · ${r.pages} pages · ${r.purchases} purchases</p>
+        <hr class="div">
+        <p style="font-size:14.5px; line-height:1.6;">${r.description}</p>
+
+        ${r.hasFile && r.fileUrl && (owned || isOwn) ? `
+        <div class="section-title" style="margin-top:24px;"><h3 style="font-size:16px;">Uploaded file</h3></div>
+        <div class="card">
+          ${(r.fileType||"").startsWith("image/") ? `<img src="${r.fileUrl}" style="max-width:100%; border-radius:10px;">` : `<embed src="${r.fileUrl}" type="application/pdf" style="width:100%; height:500px; border-radius:8px;">`}
+          <div style="margin-top:10px;"><a class="btn btn-outline btn-sm" href="${r.fileUrl}" target="_blank" download="${r.fileName||"resource"}">⬇ Download</a></div>
+        </div>
+        ` : `
+        <div class="section-title" style="margin-top:24px;"><h3 style="font-size:16px;">Random sample preview</h3><span class="small muted">Showing ${sampleCount} of ${r.pages} pages · reshuffles each visit</span></div>
+        <div class="prevgrid">${samplePages.map(p=>`<div class="previewpage"><div style="font-size:22px;">📄</div>Page ${p}</div>`).join("")}</div>
+        ${r.hasFile? `<p class="small muted" style="margin-top:8px;">The full uploaded file unlocks after purchase.</p>` : ""}
+        `}
+
+        <div class="section-title" style="margin-top:24px;"><h3 style="font-size:16px;">What this resource covers</h3></div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">${r.covers.map(c=>`<span class="tag tag-muted">${c}</span>`).join("")}</div>
+
+        <div class="section-title" style="margin-top:24px;"><h3 style="font-size:16px;">Pros & cons</h3></div>
+        <div class="proscons"><ul class="pros">${r.pros.map(p=>`<li>${p}</li>`).join("")}</ul><ul class="cons">${r.cons.map(c=>`<li>${c}</li>`).join("")}</ul></div>
+
+        <div class="section-title" style="margin-top:24px;"><h3 style="font-size:16px;">Ratings & reviews</h3><span class="small muted">${r.numRatings} rating${r.numRatings!==1?"s":""}</span></div>
+        ${owned && !isOwn ? (hasRated ? `<div class="card" style="margin-bottom:14px;"><span class="tag tag-green">✓ You reviewed this resource</span></div>` : `<div class="card" style="margin-bottom:14px;">
+          <div style="font-weight:600; font-size:13.5px; margin-bottom:8px;">Rate this resource</div>
+          <div style="font-size:22px; margin-bottom:10px; letter-spacing:3px;">${[1,2,3,4,5].map(n=>`<span style="cursor:pointer; color:${n<=pendingStar?"var(--amber)":"var(--border2)"};" onclick="selectStar('${id}',${n})">★</span>`).join("")}</div>
+          <textarea id="reviewText_${id}" rows="2" placeholder="Optional: share what you thought..."></textarea>
+          <button class="btn btn-primary btn-sm" style="margin-top:10px;" onclick="submitReview('${id}', ${pendingStar})">Submit review</button>
+        </div>`) : (!u? `<p class="small muted" style="margin-bottom:10px;">Purchase this resource to leave a review.</p>` : "")}
+        ${reviews.length? `<div class="card">${reviews.map(rv=>`<div style="padding:10px 0; border-bottom:1px solid var(--border);"><div style="display:flex; justify-content:space-between;"><b class="small">${rv.userName}</b><span class="small muted">${timeAgo(rv.ts)}</span></div><div class="stars" style="margin:4px 0;">${stars(rv.rating)}</div>${rv.text?`<p class="small">${rv.text}</p>`:""}</div>`).join("")}</div>` : `<p class="small muted">No written reviews yet — be the first after purchasing.</p>`}
+
+        <div class="trust" style="margin-top:22px;">⚠️ AI quality score and price are recommendations based on automated analysis — always check the preview and reviews before purchasing.</div>
+      </div>
+      <div>
+        <div class="card" style="position:sticky; top:80px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+            <div><div class="mono" style="font-size:26px; font-weight:700;">${r.price} <span class="small muted">pts</span></div><div class="small muted">Recommended price</div></div>
+            <div style="text-align:right;"><div class="score" style="font-size:20px; color:${scoreColor(r.aiScore)};">${r.aiScore}/100</div><div class="small muted">AI quality score</div></div>
+          </div>
+          <div class="stars" style="margin-bottom:16px;">${stars(r.rating)} <span class="muted small">${r.rating}/5 (${r.numRatings} ratings)</span></div>
+          ${isOwn? `<div class="tag tag-amber" style="margin-bottom:10px;">This is your resource</div>` :
+            owned? `<button class="btn btn-primary btn-block" onclick="nav('quizSetup',{id:'${r.id}'})">Take AI Quiz →</button>` :
+            `<button class="btn btn-primary btn-block" onclick="purchase('${r.id}')" ${u&&u.points<r.price?"disabled":""}>${u? (u.points<r.price?"Not enough points":"Purchase for "+r.price+" pts") : "Log in to purchase"}</button>`}
+          <button class="btn btn-outline btn-block" style="margin-top:8px;" onclick="toggleSave('${r.id}')">${u?.saved.includes(r.id)?"★ Saved":"☆ Save for later"}</button>
+          <button class="btn btn-ghost btn-block btn-sm" style="margin-top:4px;" onclick="reportItem('resource','${r.id}','${r.title.replace(/'/g,"")}')">🚩 Report this resource</button>
+          <hr class="div">
+          <div class="small muted">Only original or authorised content is permitted. AI screens uploads for suspected copyrighted material.</div>
+        </div>
+      </div>
+    </div>
+  </div></div>${footer()}`;
+}
+
+function viewDoubts(compose){
+  const list = DOUBTS.slice().sort((a,b)=>b.createdAt-a.createdAt);
+  return `${navBar()}<div class="pagewrap"><div class="wrap">
+    <div class="section-title"><h2>Doubts community</h2><button class="btn btn-primary btn-sm" onclick="document.getElementById('askForm').style.display='block'; this.style.display='none';">+ Ask a doubt</button></div>
+    <div id="askForm" class="card" style="display:${compose?"block":"none"}; margin-bottom:22px;">
+      <h3 style="margin-bottom:14px; font-size:15px;">Ask a doubt</h3>
+      <div class="field"><label>Title</label><input id="doubtTitle" placeholder="e.g. Confused about Newton's third law"></div>
+      <div class="formrow">
+        <div class="field"><label>Subject</label><select id="doubtSubject">${SUBJECTS.map(s=>`<option>${s}</option>`).join("")}</select></div>
+        <div class="field"><label>Chapter/topic</label><input id="doubtChapter" placeholder="e.g. Force & Laws of Motion"></div>
+      </div>
+      <div class="field"><label>Describe your doubt</label><textarea id="doubtBody" rows="3" placeholder="Explain what's confusing..."></textarea></div>
+      <button class="btn btn-primary" type="button" onclick="doAskDoubt()">Post doubt</button>
+    </div>
+    <div class="filterbar">
+      <select onchange="state.doubtFilter=this.value||null; render();"><option value="">All subjects</option>${SUBJECTS.map(s=>`<option ${state.doubtFilter===s?"selected":""}>${s}</option>`).join("")}</select>
+      <select onchange="state.doubtSort=this.value; render();">
+        <option value="recent">Most recent</option>
+        <option value="unanswered">Unanswered first</option>
+        <option value="trending">Trending (most views)</option>
+      </select>
+    </div>
+    <div class="card">
+      ${filteredDoubts(list).map(d=>`<div class="doubtcard">
+        <div class="votecol"><div class="n">${d.answers.length}</div><div class="small muted">answers</div></div>
+        <div style="flex:1; cursor:pointer;" onclick="nav('doubtDetail',{id:'${d.id}'})">
+          <div style="font-weight:600;">${d.title} ${d.answers.some(a=>a.accepted)?'<span class="tag tag-green">Solved</span>':''}</div>
+          <div class="small muted">${d.subject}${d.chapter?" · "+d.chapter:""} · Class ${d.class} · by ${d.author} · ${timeAgo(d.createdAt)} · ${d.views} views</div>
+        </div>
+      </div>`).join("") || `<div class="empty"><div class="ic">💬</div>No doubts yet — be the first to ask!</div>`}
+    </div>
+  </div></div>${footer()}`;
+}
+function filteredDoubts(list){
+  let l = list;
+  if(state.doubtFilter) l = l.filter(d=>d.subject===state.doubtFilter);
+  if(state.doubtSort==="unanswered") l = l.filter(d=>!d.answers.length).concat(l.filter(d=>d.answers.length));
+  if(state.doubtSort==="trending") l = l.slice().sort((a,b)=>b.views-a.views);
+  return l;
+}
+
+function viewDoubtDetail(id){
+  const d = DOUBTS.find(x=>x.id===id);
+  if(!d) return viewDoubts();
+  const u = state.user;
+  return `${navBar()}<div class="pagewrap"><div class="wrap" style="max-width:820px;">
+    <button class="btn btn-ghost btn-sm" style="margin-bottom:14px;" onclick="nav('doubts')">← Back to doubts</button>
+    <div class="card">
+      <div class="meta" style="margin-bottom:10px;"><span class="tag tag-violet">${d.subject}</span><span class="tag tag-muted">Class ${d.class}</span>${d.chapter?`<span class="tag tag-cyan">${d.chapter}</span>`:""}</div>
+      <h2 style="font-size:22px;">${d.title}</h2>
+      <p class="small muted" style="margin:6px 0 14px;">Asked by ${d.author} · ${timeAgo(d.createdAt)} · ${d.views} views</p>
+      <p style="font-size:14.5px; line-height:1.6;">${d.body}</p>
+      <button class="btn btn-ghost btn-sm" style="margin-top:10px;" onclick="reportItem('doubt','${d.id}','${d.title.replace(/'/g,"")}')">🚩 Report</button>
+    </div>
+    <div class="section-title" style="margin-top:24px;"><h3 style="font-size:16px;">${d.answers.length} Answer${d.answers.length!==1?"s":""}</h3></div>
+    ${d.answers.map(a=>`<div class="answercard ${a.accepted?"accepted":""}">
+      <div style="display:flex; justify-content:space-between;">
+        <div style="font-weight:600; font-size:13.5px;">${a.author} ${a.accepted?'<span class="tag tag-green">✓ Accepted</span>':""}</div>
+        <div class="small muted">${timeAgo(a.createdAt)}</div>
+      </div>
+      <p style="font-size:14px; margin-top:6px; line-height:1.55;">${a.body}</p>
+      <div style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap;">
+        <span class="small muted">👍 ${a.helpful} helpful${a.notHelpful?` · 👎 ${a.notHelpful} not helpful`:""}</span>
+        ${u && u.id===d.authorId && !a.accepted ? `<button class="btn btn-outline btn-sm" onclick="acceptAnswer('${d.id}','${a.id}')">Mark as accepted</button>` : ""}
+        ${u && u.id!==a.authorId ? `<button class="btn btn-ghost btn-sm" onclick="markNotHelpful('${d.id}','${a.id}')">👎 Not helpful</button>` : ""}
+      </div>
+    </div>`).join("") || `<p class="muted small">No answers yet — be the first to help!</p>`}
+    ${u? `<div class="card" style="margin-top:18px;">
+      <h3 style="font-size:14px; margin-bottom:10px;">Add your answer</h3>
+      <textarea id="answerBody_${d.id}" rows="3" placeholder="Explain your approach..."></textarea>
+      <button class="btn btn-primary btn-sm" style="margin-top:10px;" type="button" onclick="submitAnswer('${d.id}')">Post answer (+5 pts if helpful)</button>
+    </div>` : `<div class="card" style="margin-top:18px; text-align:center;"><a href="#" onclick="event.preventDefault(); nav('login')" style="color:var(--violet2); font-weight:600;">Log in</a> to answer this doubt.</div>`}
+  </div></div>${footer()}`;
+}
+
+function viewAssistant(){
+  return `${navBar()}<div class="pagewrap"><div class="wrap" style="max-width:820px;">
+    <div class="section-title"><h2>🤖 AI Study Assistant</h2></div>
+    <p class="muted small" style="margin-bottom:14px;">Ask me to find notes, answer a doubt directly, or paste in any text/notes and I'll summarize and explain it. This runs on built-in logic, not a live model — it won't know everything, so for anything it can't answer, try the Doubts board.</p>
+    <div class="chatwin">
+      <div class="chatlog" id="chatlog"></div>
+      <div class="suggestchips">
+        <button class="chip" onclick="chipQuery('Find the best Class 9 Physics notes')">Best Class 9 Physics notes</button>
+        <button class="chip" onclick="chipQuery('Explain Newton\\'s laws of motion')">Explain Newton's laws</button>
+        <button class="chip" onclick="chipQuery('What is photosynthesis')">What is photosynthesis?</button>
+      </div>
+      <div class="chatinputbar">
+        <input id="chatInput" placeholder="Ask a doubt, search notes, or paste text to summarize..." onkeydown="if(event.key==='Enter') sendChat()">
+        <button class="btn btn-primary btn-sm" type="button" onclick="sendChat()">Send</button>
+      </div>
+    </div>
+  </div></div>${footer()}`;
+}
+function renderChatLog(){
+  const log = document.getElementById("chatlog");
+  if(!log) return;
+  log.innerHTML = state.chat.map(m=>`<div class="msg ${m.role}">${m.text.replace(/\n/g,"<br>")}${m.resources?`<div style="margin-top:10px; display:flex; flex-direction:column; gap:6px;">${m.resources.map(r=>`<div onclick="nav('resource',{id:'${r.id}'})" style="cursor:pointer; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:8px 10px; font-size:12.5px;"><b>${r.title}</b><br><span class="muted">${r.aiScore}/100 · ${r.rating}★ · ${r.price} pts</span></div>`).join("")}</div>`:""}</div>`).join("");
+  log.scrollTop = log.scrollHeight;
+}
+
+function viewFocus(){
+  const f = state.focus;
+  const pct = f.active? Math.min(100,(f.elapsed/(45*60000))*100) : 0;
+  const today = f.log.filter(l=>l.date===new Date().toDateString()).reduce((a,b)=>a+b.minutes,0);
+  const week = f.log.slice(-7).reduce((a,b)=>a+b.minutes,0);
+  const month = f.log.reduce((a,b)=>a+b.minutes,0);
+  const maxM = Math.max(...f.log.slice(-7).map(l=>l.minutes),1);
+  const bySubject = {};
+  f.log.forEach(l=>{ bySubject[l.subject]=(bySubject[l.subject]||0)+l.minutes; });
+  const subjectEntries = Object.entries(bySubject).sort((a,b)=>b[1]-a[1]);
+  const maxSubjM = Math.max(...subjectEntries.map(e=>e[1]),1);
+  return `${navBar()}<div class="pagewrap"><div class="wrap">
+    <div class="section-title"><h2>Focus Mode</h2></div>
+    <div class="rdgrid">
+      <div class="card" style="text-align:center; padding:36px 20px;">
+        <div class="timerCircle" style="--pct:${pct}%;"><div class="inner"><div class="t">${fmtTime(f.elapsed)}</div><div class="small muted">${f.active? (f.paused?"Paused — "+f.subject:f.subject) : "Not studying"}</div></div></div>
+        <div style="margin-top:24px; display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
+          ${!f.active? `
+            <div style="width:100%;"><select id="focusSubject" style="max-width:220px; margin:0 auto 14px;">${SUBJECTS.map(s=>`<option>${s}</option>`).join("")}</select></div>
+            <button class="btn btn-primary" onclick="startFocus(document.getElementById('focusSubject').value)">▶ Start focus session</button>
+          ` : `
+            ${f.paused? `<button class="btn btn-primary" onclick="resumeFocus()">▶ Resume</button>` : `<button class="btn btn-outline" onclick="pauseFocus()">⏸ Pause</button>`}
+            <button class="btn btn-danger" onclick="endFocus()">⏹ End session</button>
+          `}
+        </div>
+        <p class="small muted" style="margin-top:16px;">Leaving this tab during an active session resets it — stay focused to have it count.</p>
+      </div>
+      <div>
+        <div class="grid cols-3" style="margin-bottom:16px;">
+          <div class="card" style="text-align:center;"><div class="mono" style="font-size:20px; font-weight:700;">${today}m</div><div class="small muted">Today</div></div>
+          <div class="card" style="text-align:center;"><div class="mono" style="font-size:20px; font-weight:700;">${week}m</div><div class="small muted">Last 7 days</div></div>
+          <div class="card" style="text-align:center;"><div class="mono" style="font-size:20px; font-weight:700;">${month}m</div><div class="small muted">Total logged</div></div>
+        </div>
+        <div class="card">
+          <h3 style="font-size:14px; margin-bottom:14px;">Recent sessions</h3>
+          ${f.log.length? `<div style="display:flex; align-items:flex-end; gap:8px; height:120px;">
+            ${f.log.slice(-7).map(l=>`<div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:6px; justify-content:flex-end; height:100%;">
+              <div style="width:100%; border-radius:6px 6px 0 0; background:linear-gradient(180deg,var(--violet),var(--cyan)); height:${Math.max(4,(l.minutes/maxM)*90)}px;"></div>
+              <div class="small muted" style="font-size:10px;">${l.date.slice(0,6)}</div>
+            </div>`).join("")}
+          </div>` : `<div class="empty" style="padding:30px 0;"><div class="ic">⏱️</div>No focus sessions logged yet. Start one to see your chart fill up.</div>`}
+        </div>
+        <div class="card" style="margin-top:16px;">
+          <h3 style="font-size:14px; margin-bottom:12px;">Time by subject</h3>
+          ${subjectEntries.length? subjectEntries.map(([subj,mins])=>`<div style="margin-bottom:10px;">
+            <div style="display:flex; justify-content:space-between; font-size:12.5px; margin-bottom:4px;"><span>${subj}</span><span class="mono muted">${mins}m</span></div>
+            <div class="bar"><div style="width:${(mins/maxSubjM)*100}%;"></div></div>
+          </div>`).join("") : `<p class="small muted">No sessions logged yet.</p>`}
+        </div>
+        <div class="card" style="margin-top:16px;">
+          <h3 style="font-size:14px; margin-bottom:8px;">Study streak</h3>
+          <div style="font-size:22px;">🔥 ${state.user.streak} days</div>
+          <p class="small muted" style="margin-top:6px;">Keep a session going each day to grow your streak.</p>
+        </div>
+        <div class="card" style="margin-top:16px;">
+          <h3 style="font-size:14px; margin-bottom:6px;">📷 Facecam study recording</h3>
+          <p class="small muted" style="margin-bottom:12px;">Record yourself studying for accountability. This happens entirely in your browser — nothing is ever uploaded or sent to us. When you stop, you download the video straight to your own device; that's the only copy that exists.</p>
+          ${state.facecamActive? `
+            <video id="facecamPreview" autoplay muted playsinline style="width:100%; max-width:260px; border-radius:10px; background:#000; display:block; margin-bottom:12px;"></video>
+            <button class="btn btn-danger btn-sm" onclick="stopFacecam()">⏹ Stop & prepare download</button>
+          ` : `<button class="btn btn-outline btn-sm" onclick="startFacecam()">🔴 Start facecam recording</button>`}
+          ${state.facecamDownloadUrl? `<div style="margin-top:12px;"><a href="${state.facecamDownloadUrl}" download="vidyaloop-study-session.webm" class="btn btn-primary btn-sm">⬇ Download your recording</a><p class="small muted" style="margin-top:6px;">Saved only in this tab's memory — download it now if you want to keep it.</p></div>` : ""}
+        </div>
+      </div>
+    </div>
+  </div></div>${footer()}`;
+}
+function renderFocusTimerOnly(){
+  if(state.route!=="focus") return;
+  const t = document.querySelector(".timerCircle .t");
+  const c = document.querySelector(".timerCircle");
+  if(t){ t.textContent = fmtTime(state.focus.elapsed); c.style.setProperty("--pct", Math.min(100,(state.focus.elapsed/(45*60000))*100)+"%"); }
+}
+
+function viewStore(){
+  const u = state.user;
+  return `${navBar()}<div class="pagewrap"><div class="wrap">
+    <div class="section-title"><div><h2>Redeem Store</h2><p class="muted small">Turn Reward Points into real study essentials.</p></div><div class="stat-pill">✦ <span class="mono">${u.points} pts available</span></div></div>
+    <div class="grid cols-3">
+      ${STORE_PRODUCTS.map(p=>`<div class="card">
+        <div class="thumb" style="height:90px; display:flex; align-items:center; justify-content:center; font-size:32px; background:var(--surface2); border-radius:10px; margin-bottom:10px;">${p.icon}</div>
+        <h4 style="margin-bottom:4px;">${p.name}</h4>
+        <p class="small muted" style="margin-bottom:12px;">${p.desc}</p>
+        <div class="foot" style="border:none; padding-top:0;">
+          <div class="mono" style="font-weight:700;">${p.cost} pts</div>
+          <button class="btn btn-primary btn-sm" onclick="redeemProduct('${p.id}')" ${u.points<p.cost?"disabled":""}>${u.points<p.cost?"Not enough pts":"Redeem"}</button>
+        </div>
+      </div>`).join("")}
+    </div>
+    <div class="section-title" style="margin-top:30px;"><h3 style="font-size:16px;">Your redemptions</h3></div>
+    ${u.redeemed.length? `<div class="card"><table><tr><th>Item</th><th>Cost</th><th>Date</th></tr>${u.redeemed.slice().reverse().map(r=>`<tr><td>${r.name}</td><td class="mono">${r.cost} pts</td><td class="small muted">${new Date(r.ts).toLocaleDateString()}</td></tr>`).join("")}</table></div>` : `<div class="empty"><div class="ic">🎁</div>No redemptions yet.</div>`}
+    <div class="trust" style="margin-top:16px;">📦 This is a simulated marketplace for the demo — no real payment or shipping occurs.</div>
+  </div></div>${footer()}`;
+}
+
+function viewStoreDashboard(){
+  const u = state.user;
+  const s = state.myStore;
+  return `${navBar()}<div class="pagewrap"><div class="wrap">
+    <div class="section-title"><h2>Store Dashboard</h2></div>
+    ${!usingRealBackend? `<div class="trust" style="margin-bottom:20px;">⚠️ Connect Supabase to create your store and add real listings — this page is read-only in offline demo mode.</div>` : ""}
+    <div class="rdgrid">
+      <div>
+        <div class="card">
+          <h3 style="font-size:15px; margin-bottom:14px;">${s? "Edit store profile" : "Create your store profile"}</h3>
+          <div class="field"><label>Store name</label><input id="storeName" value="${s?.name||""}" placeholder="e.g. Bright Stationery Corner"></div>
+          <div class="field"><label>Description</label><textarea id="storeDescription" rows="3" placeholder="What do you sell?">${s?.description||""}</textarea></div>
+          <div class="formrow">
+            <div class="field"><label>Location</label><input id="storeLocation" value="${s?.location||""}" placeholder="e.g. Near City School"></div>
+            <div class="field"><label>Contact</label><input id="storeContact" value="${s?.contact||""}" placeholder="Phone or email"></div>
+          </div>
+          <div class="field"><label>Store logo ${s?.logo_url? "(uploaded — pick a new file to replace)" : "(optional)"}</label>
+            ${s?.logo_url? `<img src="${s.logo_url}" style="width:56px; height:56px; border-radius:10px; object-fit:cover; margin-bottom:8px;">` : ""}
+            <input id="storeLogoFile" type="file" accept="image/*">
+          </div>
+          <button class="btn btn-primary btn-block" onclick="saveStoreProfile()">${s? "Save changes" : "Create store"}</button>
+        </div>
+        ${s? `<div class="card" style="margin-top:16px;">
+          <h3 style="font-size:15px; margin-bottom:14px;">Add a product</h3>
+          <div class="field"><label>Product name</label><input id="prodName" placeholder="e.g. Geometry Box"></div>
+          <div class="field"><label>Description</label><textarea id="prodDescription" rows="2" placeholder="Short description"></textarea></div>
+          <div class="formrow">
+            <div class="field"><label>Category</label><input id="prodCategory" placeholder="e.g. Stationery"></div>
+            <div class="field"><label>Price (₹)</label><input id="prodPrice" type="number" min="0" placeholder="0"></div>
+          </div>
+          <div class="field"><label>Product image (optional)</label><input id="prodImageFile" type="file" accept="image/*"></div>
+          <button class="btn btn-primary btn-block" onclick="addProduct()">Add listing</button>
+        </div>` : ""}
+      </div>
+      <div>
+        <div class="section-title"><h3 style="font-size:15px;">My listings</h3></div>
+        ${state.myProducts.length? state.myProducts.map(p=>`<div class="card" style="margin-bottom:12px;">
+          <div style="display:flex; justify-content:space-between; gap:10px;">
+            <div style="display:flex; gap:10px;">${p.image_url?`<img src="${p.image_url}" style="width:44px; height:44px; border-radius:8px; object-fit:cover;">`:""}<div><b>${p.name}</b><div class="small muted">${p.category} · ₹${p.price}</div></div></div>
+            <span class="tag ${p.available?"tag-green":"tag-pink"}">${p.available?"Available":"Unavailable"}</span>
+          </div>
+          <p class="small" style="margin:8px 0;">${p.description||""}</p>
+          <div style="display:flex; gap:8px;">
+            <button class="btn btn-outline btn-sm" onclick="toggleProductAvailability('${p.id}', ${p.available})">${p.available?"Mark unavailable":"Mark available"}</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteProduct('${p.id}')">Remove</button>
+          </div>
+        </div>`).join("") : `<div class="empty"><div class="ic">🏪</div>${s? "No listings yet — add your first product." : "Create your store profile to start listing products."}</div>`}
+      </div>
+    </div>
+  </div></div>${footer()}`;
+}
+
+function viewStoreMarketplace(){
+  const q = (state.search||"").toLowerCase();
+  let list = state.storeMarketAll;
+  const cat = state.storeMarketFilter;
+  if(cat) list = list.filter(p=>p.category===cat);
+  if(q) list = list.filter(p=>p.name.toLowerCase().includes(q) || (p.description||"").toLowerCase().includes(q));
+  const categories = [...new Set(state.storeMarketAll.map(p=>p.category))];
+  return `${navBar()}<div class="pagewrap"><div class="wrap">
+    <div class="section-title"><h2>Store Marketplace</h2><span class="muted small">Physical items from student-run stores</span></div>
+    ${!usingRealBackend? `<div class="trust" style="margin-bottom:20px;">⚠️ Connect Supabase to see real store listings.</div>` : ""}
+    <div class="filterbar">
+      <select onchange="state.storeMarketFilter=this.value||null; render();"><option value="">All categories</option>${categories.map(c=>`<option ${cat===c?"selected":""}>${c}</option>`).join("")}</select>
+    </div>
+    ${list.length? `<div class="grid cols-3">${list.map(p=>`<div class="card">
+      <div class="thumb" style="height:90px; display:flex; align-items:center; justify-content:center; font-size:30px; background:var(--surface2); border-radius:10px; margin-bottom:10px; overflow:hidden;">${p.image_url?`<img src="${p.image_url}" style="width:100%; height:100%; object-fit:cover;">`:"🛍️"}</div>
+      <div class="meta" style="margin-bottom:6px;"><span class="tag tag-cyan">${p.category}</span></div>
+      <h4 style="margin-bottom:4px;">${p.name}</h4>
+      <p class="small muted" style="margin-bottom:8px;">${p.description||""}</p>
+      <div class="small muted">Sold by ${p.stores?.name||"a store"} · ${p.stores?.location||""}</div>
+      <div class="foot"><div class="mono" style="font-weight:700;">₹${p.price}</div><span class="tag tag-amber">Purchasing: Coming Soon</span></div>
+    </div>`).join("")}</div>` : `<div class="empty"><div class="ic">🏪</div>No store listings yet.</div>`}
+  </div></div>${footer()}`;
+}
+function viewLibrary(){
+  const u = state.user;
+  const tab = state.libTab || "purchased";
+  const tabs = [["purchased","Purchased"],["uploaded","Uploaded"],["saved","Saved"],["quizzes","Quiz history"],["recent","Recently viewed"],["redeemed","Redeemed"]];
+  let body = "";
+  if(tab==="purchased"){
+    const items = RESOURCES.filter(r=>u.purchased.includes(r.id));
+    body = items.length? `<div class="grid cols-3">${items.map(resCard).join("")}</div>` : `<div class="empty"><div class="ic">📦</div>Nothing purchased yet — visit the marketplace.</div>`;
+  } else if(tab==="uploaded"){
+    const items = RESOURCES.filter(r=>u.uploaded.includes(r.id));
+    body = items.length? `<div class="grid cols-3">${items.map(r=>`<div class="card">${statusBadge(r.status)}<h4 style="margin:8px 0 4px;">${r.title}</h4><div class="small muted">${r.subject} · AI score ${r.aiScore}/100 · ${r.price} pts</div></div>`).join("")}</div>` : `<div class="empty"><div class="ic">⬆️</div>Nothing uploaded yet.</div>`;
+  } else if(tab==="saved"){
+    const items = RESOURCES.filter(r=>u.saved.includes(r.id));
+    body = items.length? `<div class="grid cols-3">${items.map(resCard).join("")}</div>` : `<div class="empty"><div class="ic">☆</div>No saved resources.</div>`;
+  } else if(tab==="recent"){
+    const items = u.recentlyViewed.map(id=>RESOURCES.find(r=>r.id===id)).filter(Boolean);
+    body = items.length? `<div class="grid cols-3">${items.map(resCard).join("")}</div>` : `<div class="empty"><div class="ic">👀</div>Nothing viewed yet — browse the marketplace.</div>`;
+  } else if(tab==="redeemed"){
+    body = u.redeemed.length? `<div class="card"><table><tr><th>Item</th><th>Cost</th><th>Date</th></tr>${u.redeemed.slice().reverse().map(r=>`<tr><td>${r.name}</td><td class="mono">${r.cost} pts</td><td class="small muted">${new Date(r.ts).toLocaleDateString()}</td></tr>`).join("")}</table></div>` : `<div class="empty"><div class="ic">🎁</div>No redemptions yet — visit the Store.</div>`;
+  } else {
+    body = u.quizHistory.length? `<div class="card"><table><tr><th>Resource</th><th>Score</th><th>Weak topics</th><th>Date</th></tr>${u.quizHistory.map(q=>{const r=RESOURCES.find(x=>x.id===q.resourceId); return `<tr><td>${r?r.title:"—"}</td><td><span class="tag ${q.score>=70?"tag-green":"tag-amber"}">${q.score}%</span></td><td class="small muted">${q.weak.join(", ")||"None 🎉"}</td><td class="small muted">${timeAgo(q.ts)}</td></tr>`}).join("")}</table></div>` : `<div class="empty"><div class="ic">📝</div>No quizzes taken yet.</div>`;
+  }
+  return `${navBar()}<div class="pagewrap"><div class="wrap">
+    <div class="section-title"><h2>My Library</h2></div>
+    <div class="tabbar">${tabs.map(([k,l])=>`<button class="tabbtn ${tab===k?"active":""}" onclick="state.libTab='${k}'; render();">${l}</button>`).join("")}</div>
+    ${body}
+  </div></div>${footer()}`;
+}
+function statusBadge(s){
+  const map = {approved:["tag-green","Approved"], pending:["tag-amber","Pending review"], rejected:["tag-pink","Rejected"], needs_improvement:["tag-pink","Needs improvement"]};
+  const [cls,label] = map[s]||["tag-muted",s];
+  return `<span class="tag ${cls}">${label}</span>`;
+}
+
+function viewSeller(){
+  const u = state.user;
+  const myItems = RESOURCES.filter(r=>u.uploaded.includes(r.id));
+  return `${navBar()}<div class="pagewrap"><div class="wrap">
+    <div class="section-title"><h2>Seller Dashboard</h2><button class="btn btn-primary btn-sm" onclick="nav('sellerUpload')">+ Upload resource</button></div>
+    <div class="grid cols-3" style="margin-bottom:22px;">
+      <div class="card statbig"><div class="ic" style="background:rgba(139,92,246,.15); color:var(--violet2);">📚</div><div><div class="n">${myItems.length}</div><div class="l">Resources uploaded</div></div></div>
+      <div class="card statbig"><div class="ic" style="background:rgba(52,211,153,.15); color:var(--green);">🛒</div><div><div class="n">${myItems.reduce((a,r)=>a+r.purchases,0)}</div><div class="l">Total purchases</div></div></div>
+      <div class="card statbig"><div class="ic" style="background:rgba(255,176,32,.15); color:var(--amber);">⭐</div><div><div class="n">${myItems.length? (myItems.reduce((a,r)=>a+r.rating,0)/myItems.length).toFixed(1):"—"}</div><div class="l">Avg. rating</div></div></div>
+    </div>
+    ${myItems.length? `<div class="card"><table>
+      <tr><th>Resource</th><th>Status</th><th>AI score</th><th>Price</th><th>Purchases</th><th>Rating</th></tr>
+      ${myItems.map(r=>`<tr><td>${r.title}</td><td>${statusBadge(r.status)}</td><td class="mono" style="color:${scoreColor(r.aiScore)}">${r.aiScore}/100</td><td class="mono">${r.price} pts</td><td>${r.purchases}</td><td>${r.rating||"—"}</td></tr>`).join("")}
+    </table></div>` : `<div class="empty"><div class="ic">🪄</div>Upload your first resource to get an instant AI quality score and fair price.</div>`}
+  </div></div>${footer()}`;
+}
+function viewSellerUpload(){
+  return `${navBar()}<div class="pagewrap"><div class="wrap" style="max-width:640px;">
+    <button class="btn btn-ghost btn-sm" style="margin-bottom:14px;" onclick="nav('seller')">← Back</button>
+    <div class="card">
+      <h2 style="margin-bottom:4px;">Upload a resource</h2>
+      <p class="muted small" style="margin-bottom:20px;">Only upload original notes or content you have the rights to share. AI will evaluate quality and suggest a fair price.</p>
+      <div class="field"><label>Title</label><input id="uploadTitle" placeholder="e.g. Motion — Full Chapter Notes"></div>
+      <div class="formrow">
+        <div class="field"><label>Subject</label><select id="uploadSubject">${SUBJECTS.map(s=>`<option>${s}</option>`).join("")}</select></div>
+        <div class="field"><label>Class</label><select id="uploadClass">${CLASSES.map(c=>`<option value="${c}">Class ${c}</option>`).join("")}</select></div>
+      </div>
+      <div class="formrow">
+        <div class="field"><label>Chapter/topic</label><input id="uploadChapter" placeholder="e.g. Force & Laws of Motion"></div>
+        <div class="field"><label>Resource type</label><select id="uploadType"><option>Notes</option><option>Study Guide</option><option>Practice Paper</option><option>Worksheet</option><option>Revision Sheet</option></select></div>
+      </div>
+      <div class="field"><label>Number of pages</label><input id="uploadPages" type="number" min="1" value="6"></div>
+      <div class="field"><label>Description</label><textarea id="uploadDescription" rows="4" placeholder="What does this resource cover? Include chapter, style (examples/diagrams), and who it's best for."></textarea></div>
+      <div class="field"><label>Upload file (PDF or image, up to 3MB)</label>
+        <div id="uploadFileBox" style="border:1px dashed var(--border2); border-radius:10px; padding:18px; text-align:center; color:var(--muted); font-size:13px; cursor:pointer;" onclick="document.getElementById('uploadFile').click()">
+          <span id="uploadFileLabel">📎 Click to choose a PDF or image file</span>
+        </div>
+        <input id="uploadFile" type="file" accept=".pdf,image/*" style="display:none;" onchange="onUploadFilePicked(this)">
+      </div>
+      <button class="btn btn-primary btn-block" type="button" onclick="doUploadResource()">Submit for AI evaluation</button>
+    </div>
+  </div></div>${footer()}`;
+}
+function viewSellerResult(id){
+  const r = RESOURCES.find(x=>x.id===id);
+  return `${navBar()}<div class="pagewrap"><div class="wrap" style="max-width:640px;">
+    <div class="card" style="text-align:center;">
+      <div style="font-size:34px;">🤖</div>
+      <h2 style="margin:10px 0 4px;">AI Evaluation Complete</h2>
+      <p class="muted small" style="margin-bottom:20px;">This is a recommendation, not a guarantee — admins may adjust before publishing.</p>
+      <div class="grid cols-2" style="margin-bottom:18px;">
+        <div class="card"><div class="score" style="font-size:30px; color:${scoreColor(r.aiScore)};">${r.aiScore}</div><div class="small muted">Quality score / 100</div></div>
+        <div class="card"><div class="mono" style="font-size:30px; font-weight:700;">${r.price}</div><div class="small muted">Recommended price (pts)</div></div>
+      </div>
+      <div class="proscons" style="text-align:left; margin-bottom:18px;"><ul class="pros">${r.pros.map(p=>`<li>${p}</li>`).join("")}</ul><ul class="cons">${r.cons.map(c=>`<li>${c}</li>`).join("")}</ul></div>
+      ${statusBadge(r.status)}
+      <p class="small muted" style="margin-top:12px;">${r.status==="pending"?"Sent to admin moderation queue for final approval.":"Score below the auto-approve threshold — revise and resubmit for a better result."}</p>
+      <button class="btn btn-primary" style="margin-top:16px;" onclick="nav('seller')">Back to seller dashboard</button>
+    </div>
+  </div></div>${footer()}`;
+}
+
+function viewAdmin(){
+  const tab = state.adminTab || "moderation";
+  const tabs = [["moderation","Resource moderation"],["reports","Reports"],["users","Users"],["pricing","Pricing rules"],
+    ["storeOwners","Store Owners"],["promoCodes","Promo Codes"],["subscriptions","Subscriptions & Transactions"]];
+  let body="";
+  if(tab==="moderation"){
+    body = ADMIN_PENDING.length? ADMIN_PENDING.map(r=>`<div class="card" style="margin-bottom:12px;">
+      <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px;">
+        <div><b>${r.title}</b><div class="small muted">${r.subject} · Class ${r.class} · by ${r.creator}</div></div>
+        <div style="display:flex; gap:8px;"><div class="tag" style="background:rgba(139,92,246,.15); color:var(--violet2);">AI ${r.aiScore}/100</div><div class="tag tag-cyan">${r.recommendedPrice} pts</div></div>
+      </div>
+      <p class="small" style="margin:10px 0;">${r.description}</p>
+      <div style="display:flex; gap:8px;"><button class="btn btn-primary btn-sm" onclick="adminApprove('${r.id}',true)">Approve</button><button class="btn btn-danger btn-sm" onclick="adminApprove('${r.id}',false)">Reject</button></div>
+    </div>`).join("") : `<div class="empty"><div class="ic">✅</div>No resources awaiting review.</div>`;
+  } else if(tab==="reports"){
+    body = ADMIN_REPORTS.length? `<div class="card"><table><tr><th>Type</th><th>Item</th><th>Status</th><th></th></tr>${ADMIN_REPORTS.map(r=>`<tr><td>${r.kind}</td><td>${r.title}</td><td>${statusBadge(r.status==="open"?"pending":"approved")}</td><td>${r.status==="open"?`<div style="display:flex; gap:6px;"><button class="btn btn-outline btn-sm" onclick="adminResolveReport('${r.id}',false)">Dismiss</button><button class="btn btn-danger btn-sm" onclick="adminResolveReport('${r.id}',true)">Uphold (−rep)</button></div>`:""}</td></tr>`).join("")}</table></div>` : `<div class="empty"><div class="ic">🚩</div>No reports filed.</div>`;
+  } else if(tab==="users"){
+    const cache = state.allUsersCache;
+    if(!cache){
+      body = `<div class="empty"><div class="ic">⏳</div>Loading everyone who has ever signed in...</div>`;
+    } else if(!cache.length){
+      body = `<div class="empty"><div class="ic">👤</div>Nobody has logged in yet — this list fills up as real students sign in.</div>`;
+    } else {
+      body = `<div class="section-title"><span class="small muted">${cache.length} registered user${cache.length!==1?"s":""}${usingRealBackend?" · saved permanently":" · this browser session only"}</span><button class="btn btn-ghost btn-sm" onclick="loadAllUsers()">↻ Refresh</button></div>
+      <div class="card"><table><tr><th>User</th><th>Class</th><th>Board</th><th>Points</th><th>Reputation</th><th>First logged in</th><th>Last seen</th><th>Logins</th><th>Status</th><th></th></tr>${cache.map(ru=>`<tr><td>${ru.name}${ru.owner?' <span class="tag tag-amber">Owner</span>':""}</td><td>${ru.class}</td><td>${ru.board}</td><td class="mono">${ru.points}</td><td class="mono">${ru.reputation}</td><td class="small muted">${new Date(ru.firstLogin).toLocaleString()}</td><td class="small muted">${timeAgo(ru.lastLogin)}</td><td class="mono">${ru.loginCount}</td><td>${ru.status==="active"?'<span class="tag tag-green">Active</span>':'<span class="tag tag-pink">Suspended</span>'}</td><td>${ru.owner?"":`<button class="btn btn-outline btn-sm" onclick="adminToggleUser('${ru.name.replace(/'/g,"")}')">${ru.status==="active"?"Suspend":"Reinstate"}</button>`}</td></tr>`).join("")}</table></div>`;
+    }
+  } else if(tab==="pricing"){
+    body = `<div class="card">
+      <div class="field"><label>Answer reward (points)</label><input type="number" value="${ADMIN_CONFIG.answerReward}" onchange="updateConfig('answerReward',this.value)"></div>
+      <div class="field"><label>Accepted-answer bonus (points)</label><input type="number" value="${ADMIN_CONFIG.acceptedBonus}" onchange="updateConfig('acceptedBonus',this.value)"></div>
+      <div class="field"><label>Reputation penalty (upheld report / rejection)</label><input type="number" value="${ADMIN_CONFIG.reportPenalty}" onchange="updateConfig('reportPenalty',this.value)"></div>
+      <div class="field"><label>Max resource price (points)</label><input type="number" value="${ADMIN_CONFIG.maxResourcePrice}" onchange="updateConfig('maxResourcePrice',this.value)"></div>
+      <div class="field"><label>Auto-approve AI score threshold</label><input type="number" value="${ADMIN_CONFIG.autoApproveThreshold}" onchange="updateConfig('autoApproveThreshold',this.value)"></div>
+      <div class="field"><label>Daily Reward Point earning cap (anti-abuse)</label><input type="number" value="${ADMIN_CONFIG.dailyPointCap}" onchange="updateConfig('dailyPointCap',this.value)"></div>
+      <p class="small muted">These rules are live — changing a value here changes what students earn/pay from this point on.</p>
+    </div>
+    <div class="section-title" style="margin-top:20px;"><h3 style="font-size:15px;">Premium pricing (live in Supabase)</h3></div>
+    <div class="card">
+      <div class="formrow">
+        <div class="field"><label>Monthly price (₹)</label><input id="cfgMonthlyPrice" type="number" value="${state.pricing.monthly_price_inr}"></div>
+        <div class="field"><label>Yearly price (₹)</label><input id="cfgYearlyPrice" type="number" value="${state.pricing.yearly_price_inr}"></div>
+      </div>
+      <div class="formrow">
+        <div class="field"><label>Monthly Reward Points included</label><input id="cfgMonthlyRp" type="number" value="${state.pricing.monthly_rp}"></div>
+        <div class="field"><label>Yearly Reward Points included</label><input id="cfgYearlyRp" type="number" value="${state.pricing.yearly_rp}"></div>
+      </div>
+      <div class="field" style="max-width:220px;"><label>₹1 = how many RP</label><input id="cfgRpPerRupee" type="number" value="${state.pricing.rp_per_rupee}"></div>
+      <button class="btn btn-primary" onclick="saveAdminPricing()">Save pricing</button>
+      ${!usingRealBackend? `<p class="small muted" style="margin-top:8px;">Connect Supabase to save this for real.</p>` : ""}
+    </div>`;
+  } else if(tab==="storeOwners"){
+    const stores = state.adminStores;
+    if(!stores){ body = `<div class="empty"><div class="ic">⏳</div>Loading store owners...</div>`; }
+    else if(!stores.length){ body = `<div class="empty"><div class="ic">🏪</div>No stores created yet.</div>`; }
+    else {
+      body = `<div class="card"><table><tr><th>Store</th><th>Owner</th><th>Location</th><th>Contact</th><th>Created</th></tr>${stores.map(s=>`<tr><td>${s.name}</td><td>${s.profiles?.name||"—"}</td><td>${s.location||"—"}</td><td>${s.contact||"—"}</td><td class="small muted">${new Date(s.created_at).toLocaleDateString()}</td></tr>`).join("")}</table></div>`;
+    }
+  } else if(tab==="promoCodes"){
+    body = `<div class="card" style="margin-bottom:20px;">
+      <h3 style="font-size:14px; margin-bottom:12px;">Create a promo code</h3>
+      <div class="formrow">
+        <div class="field"><label>Code</label><input id="newPromoCode" placeholder="TINKER2026"></div>
+        <div class="field"><label>Description</label><input id="newPromoDesc" placeholder="Launch promo"></div>
+      </div>
+      <div class="formrow">
+        <div class="field"><label>Premium days</label><input id="newPromoDays" type="number" value="30"></div>
+        <div class="field"><label>RP bonus</label><input id="newPromoRp" type="number" value="500"></div>
+      </div>
+      <div class="formrow">
+        <div class="field"><label>Max uses (blank = unlimited)</label><input id="newPromoMaxUses" type="number" placeholder="20"></div>
+        <div class="field"><label>Expiry date</label><input id="newPromoExpiry" type="date"></div>
+      </div>
+      <label class="small" style="display:flex; align-items:center; gap:8px; margin-bottom:14px;"><input id="newPromoNewUsersOnly" type="checkbox"> New users only</label>
+      <button class="btn btn-primary" onclick="createPromoCode()">Create code</button>
+    </div>
+    <div class="section-title"><h3 style="font-size:15px;">Existing codes</h3></div>
+    ${state.promoCodes.length? `<div class="card"><table><tr><th>Code</th><th>Reward</th><th>Uses</th><th>Expiry</th><th>Status</th><th></th></tr>${state.promoCodes.map(c=>`<tr><td><b>${c.code}</b><div class="small muted">${c.description||""}</div></td><td class="small">${c.premium_days}d Premium + ${c.rp_bonus} RP</td><td class="mono">${c.max_uses||"∞"}</td><td class="small muted">${c.expiry_date? new Date(c.expiry_date).toLocaleDateString(): "—"}</td><td>${c.active?'<span class="tag tag-green">Active</span>':'<span class="tag tag-pink">Inactive</span>'}</td><td style="display:flex; gap:6px;"><button class="btn btn-outline btn-sm" onclick="togglePromoActive('${c.id}',${c.active})">${c.active?"Disable":"Enable"}</button><button class="btn btn-danger btn-sm" onclick="deletePromoCode('${c.id}')">Delete</button></td></tr>`).join("")}</table></div>` : `<div class="empty"><div class="ic">🎟️</div>No promo codes yet.</div>`}
+    <div class="section-title" style="margin-top:20px;"><h3 style="font-size:15px;">Redemptions</h3></div>
+    ${state.redemptions.length? `<div class="card"><table><tr><th>Code</th><th>User</th><th>Redeemed</th></tr>${state.redemptions.map(r=>`<tr><td>${r.code}</td><td>${r.user_name}</td><td class="small muted">${new Date(r.redeemed_at).toLocaleString()}</td></tr>`).join("")}</table></div>` : `<div class="empty"><div class="ic">📋</div>No redemptions yet.</div>`}`;
+  } else if(tab==="subscriptions"){
+    body = `<div class="empty"><div class="ic">💳</div>Subscriptions & payment tracking aren't part of this database yet — this section will populate once those tables are added.</div>`;
+  } else {
+    body = `<div class="empty"><div class="ic">❓</div>Unknown tab.</div>`;
+  }
+  return `${navBar()}<div class="pagewrap"><div class="wrap">
+    <div class="section-title"><h2>Admin Panel</h2></div>
+    <div class="tabbar">${tabs.map(([k,l])=>`<button class="tabbtn ${tab===k?"active":""}" onclick="state.adminTab='${k}'; ${k==='users'?'loadAllUsers();':k==='storeOwners'?'loadAdminStores();':k==='promoCodes'?'loadPromoAdminData();':k==='subscriptions'?'loadAdminSubs();':'render();'}">${l}</button>`).join("")}</div>
+    ${body}
+  </div></div>${footer()}`;
+}
+
+function viewStoreOrders(){
+  return `${navBar()}<div class="pagewrap"><div class="wrap">
+    <div class="section-title"><h2>Orders & Transactions</h2></div>
+    <div class="empty"><div class="ic">📦</div>Real purchasing of physical products is <span class="tag tag-amber">Coming Soon</span>. Once students can buy directly, orders will appear here.</div>
+  </div></div>${footer()}`;
+}
+function viewPremium(){
+  const u = state.user;
+  const sub = state.subscription;
+  const isActive = sub && sub.status==="active" && new Date(sub.expiry_date) > new Date();
+  const p = state.pricing;
+  const comingSoon = ["Personalized study recommendations","Advanced resource comparison","Advanced note analysis"];
+  const included = ["AI Study Assistant (doubt-answering + summarizer)","AI Quiz & Test Generator","AI note quality evaluation"];
+  return `${navBar()}<div class="pagewrap"><div class="wrap" style="max-width:900px;">
+    <div class="section-title"><div><h2>Premium</h2><p class="muted small">Unlock premium AI features and a monthly Reward Point allocation.</p></div></div>
+
+    ${isActive? `<div class="card" style="margin-bottom:22px; border-color:var(--green);">
+      <div class="tag tag-green" style="margin-bottom:8px;">✓ Premium Active</div>
+      <div class="grid cols-3">
+        <div><div class="small muted">Plan</div><div style="font-weight:700; text-transform:capitalize;">${sub.plan}</div></div>
+        <div><div class="small muted">Started</div><div style="font-weight:700;">${new Date(sub.start_date).toLocaleDateString()}</div></div>
+        <div><div class="small muted">Renews / Expires</div><div style="font-weight:700;">${new Date(sub.expiry_date).toLocaleDateString()}</div></div>
+      </div>
+    </div>` : `<div class="trust" style="margin-bottom:22px;">You don't have an active Premium subscription yet.</div>`}
+
+    <div class="grid cols-2" style="margin-bottom:24px;">
+      <div class="card">
+        <div class="eyebrow">Monthly</div>
+        <div style="font-size:32px; font-weight:700; margin:6px 0;">₹${p.monthly_price_inr}<span class="small muted">/month</span></div>
+        <p class="small muted" style="margin-bottom:14px;">+${p.monthly_rp} Reward Points included</p>
+        <button class="btn btn-primary btn-block" onclick="startSubscribe('monthly')">Subscribe monthly</button>
+      </div>
+      <div class="card" style="border-color:var(--violet);">
+        <div class="eyebrow">Yearly · Best value</div>
+        <div style="font-size:32px; font-weight:700; margin:6px 0;">₹${p.yearly_price_inr}<span class="small muted">/year</span></div>
+        <p class="small muted" style="margin-bottom:14px;">+${p.yearly_rp} Reward Points included</p>
+        <button class="btn btn-primary btn-block" onclick="startSubscribe('yearly')">Subscribe yearly</button>
+      </div>
+    </div>
+
+    <div class="section-title"><h3 style="font-size:15px;">What's included</h3></div>
+    <div class="card" style="margin-bottom:20px;">
+      <div class="proscons"><ul class="pros">${included.map(f=>`<li>${f}</li>`).join("")}</ul>
+      <ul style="list-style:none; display:flex; flex-direction:column; gap:6px; font-size:13px;">${comingSoon.map(f=>`<li>🔒 ${f} <span class="tag tag-amber" style="margin-left:4px;">Coming Soon</span></li>`).join("")}</ul></div>
+    </div>
+
+    <div class="section-title"><h3 style="font-size:15px;">Redeem a promo code</h3></div>
+    <div class="card" style="margin-bottom:20px; display:flex; gap:10px; flex-wrap:wrap;">
+      <input id="promoCodeInput" placeholder="e.g. TINKER2026" style="flex:1; min-width:200px;">
+      <button class="btn btn-primary" onclick="redeemPromoCode()">Redeem</button>
+    </div>
+
+    <div class="trust">✦ Reward Points are internal platform credits — they cannot be withdrawn, transferred, or converted back into money. ₹1 = ${p.rp_per_rupee} RP when purchased through a plan.</div>
+    ${!usingRealBackend? `<div class="trust" style="margin-top:10px;">⚠️ Connect Supabase to see real pricing/subscription data and redeem promo codes.</div>` : ""}
+  </div></div>${footer()}`;
+}
+function startSubscribe(plan){
+  toast("Payment integration is being finalized — check back soon! (No charge has been made.)");
+}
+window.startSubscribe = startSubscribe;
+
+function viewProfile(){
+  const u = state.user;
+  return `${navBar()}<div class="pagewrap"><div class="wrap" style="max-width:760px;">
+    <div class="card" style="display:flex; gap:18px; align-items:center; flex-wrap:wrap;">
+      <div class="avatar" style="width:64px; height:64px; font-size:22px; background:${u.avatarColor};">${initials(u.name)}</div>
+      <div style="flex:1;">
+        <h2>${u.name}</h2>
+        <p class="muted small">Class ${u.class} · ${u.board} · Joined ${new Date(u.joinDate).toLocaleDateString()}</p>
+        <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">${u.badges.map(b=>`<span class="tag tag-amber">🏅 ${b}</span>`).join("")}</div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="logout()">Log out</button>
+    </div>
+    <div class="card" style="margin-top:16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:${state.editingBio?"10px":"0"};">
+        <h3 style="font-size:14px;">About me</h3>
+        ${state.editingBio? "" : `<button class="btn btn-ghost btn-sm" onclick="state.editingBio=true; render();">✏️ Edit</button>`}
+      </div>
+      ${state.editingBio? `
+        <textarea id="bioInput" rows="3" placeholder="Tell others a bit about yourself, what you're studying, or what you're good at...">${u.bio}</textarea>
+        <div style="display:flex; gap:8px; margin-top:10px;">
+          <button class="btn btn-primary btn-sm" onclick="saveBio()">Save</button>
+          <button class="btn btn-ghost btn-sm" onclick="state.editingBio=false; render();">Cancel</button>
+        </div>
+      ` : `<p class="small ${u.bio?"":"muted"}">${u.bio || "No bio yet — click Edit to add one."}</p>`}
+    </div>
+    <div class="grid cols-3" style="margin:18px 0;">
+      <div class="card" style="text-align:center;"><div class="mono" style="font-size:20px; font-weight:700;">${u.points}</div><div class="small muted">Reward Points</div></div>
+      <div class="card" style="text-align:center;"><div class="mono" style="font-size:20px; font-weight:700;">${u.reputation}</div><div class="small muted">Reputation</div></div>
+      <div class="card" style="text-align:center;"><div class="mono" style="font-size:20px; font-weight:700;">${u.uploaded.length}</div><div class="small muted">Resources shared</div></div>
+    </div>
+    <div class="card">
+      <h3 style="font-size:15px; margin-bottom:12px;">Reward Point history</h3>
+      ${state.transactions.length? `<table><tr><th>Reason</th><th>Amount</th><th>Date</th></tr>${state.transactions.map(t=>`<tr><td>${t.reason}</td><td class="mono" style="color:${t.amount>0?"var(--green)":"var(--red)"}">${t.amount>0?"+":""}${t.amount}</td><td class="small muted">${new Date(t.ts).toLocaleDateString()}</td></tr>`).join("")}</table>` : `<p class="muted small">No transactions yet.</p>`}
+    </div>
+    <div class="trust" style="margin-top:16px;">🔒 Reputation reflects contribution quality and can't be bought, sold, or spent.</div>
+  </div></div>${footer()}`;
+}
+
+function saveBio(){
+  const val = document.getElementById("bioInput").value;
+  state.user.bio = val;
+  state.editingBio = false;
+  toast("Bio updated.");
+  render();
+}
+window.saveBio = saveBio;
+
+function viewQuizSetup(id){
+  const r = RESOURCES.find(x=>x.id===id);
+  return `${navBar()}<div class="pagewrap"><div class="wrap" style="max-width:560px;">
+    <button class="btn btn-ghost btn-sm" style="margin-bottom:14px;" onclick="nav('resource',{id:'${id}'})">← Back to resource</button>
+    <div class="card">
+      <h2 style="margin-bottom:4px;">Generate a quiz</h2>
+      <p class="muted small" style="margin-bottom:18px;">From: ${r.title}</p>
+      <div class="field"><label>Number of questions</label><select id="qCount"><option value="5">5 — Quick quiz</option><option value="10" selected>10 — Standard</option><option value="20">20 — Chapter test</option></select></div>
+      <div class="field"><label>Difficulty</label><select id="qDiff"><option>Easy</option><option selected>Medium</option><option>Hard</option><option>Mixed</option></select></div>
+      <div class="field"><label>Question type</label><select id="qType"><option>MCQ</option><option>Mixed (MCQ + Short answer)</option></select></div>
+      <button class="btn btn-primary btn-block" onclick="startQuiz('${id}', document.getElementById('qCount').value, document.getElementById('qDiff').value)">Generate quiz</button>
+    </div>
+  </div></div>${footer()}`;
+}
+function viewQuizTake(){
+  const qz = state.quiz;
+  const r = RESOURCES.find(x=>x.id===qz.resourceId);
+  return `${navBar()}<div class="pagewrap"><div class="wrap" style="max-width:640px;">
+    <div class="section-title"><h2 style="font-size:18px;">${r.title} — Quiz</h2><span class="small muted">${Object.keys(qz.answers).length}/${qz.questions.length} answered</span></div>
+    ${qz.questions.map((q,i)=>`<div class="card" style="margin-bottom:14px;">
+      <div style="font-weight:600; font-size:14px; margin-bottom:12px;">${i+1}. ${q.q}</div>
+      ${q.options.map((o,oi)=>`<div class="qopt ${qz.answers[q.id]===oi?"selected":""}" onclick="selectQuizAnswer(${q.id},${oi})">${o}</div>`).join("")}
+    </div>`).join("")}
+    <button class="btn btn-primary btn-block" onclick="submitQuiz()" ${Object.keys(qz.answers).length<qz.questions.length?"disabled":""}>Submit quiz</button>
+  </div></div>${footer()}`;
+}
+function renderQuizTake(){ const app=document.getElementById("app"); if(state.route==="quizTake") app.innerHTML = viewQuizTake(); }
+function viewQuizResult(){
+  const qz = state.quiz;
+  const r = RESOURCES.find(x=>x.id===qz.resourceId);
+  return `${navBar()}<div class="pagewrap"><div class="wrap" style="max-width:640px;">
+    <div class="card" style="text-align:center; margin-bottom:20px;">
+      <div class="score" style="font-size:44px; color:${scoreColor(qz.score)};">${qz.score}%</div>
+      <p class="muted small">${r.title}</p>
+      <div class="bar" style="margin:14px 0;"><div style="width:${qz.score}%; background:linear-gradient(90deg,var(--violet),var(--cyan));"></div></div>
+      ${qz.weak.length? `<p class="small">Weak areas: ${qz.weak.map(w=>`<span class="tag tag-amber" style="margin:2px;">${w}</span>`).join("")}</p>` : `<p class="small" style="color:var(--green);">Strong across all topics 🎉</p>`}
+      <div style="display:flex; gap:10px; justify-content:center; margin-top:16px;">
+        <button class="btn btn-primary btn-sm" onclick="startQuiz('${r.id}', ${qz.questions.length}, qz.difficulty)">Retry focusing on weak areas</button>
+        <button class="btn btn-outline btn-sm" onclick="nav('library')">View history</button>
+      </div>
+    </div>
+    <div class="section-title"><h3 style="font-size:15px;">Review answers</h3></div>
+    ${qz.questions.map((q,i)=>{ const chosen=qz.answers[q.id]; return `<div class="card" style="margin-bottom:12px;">
+      <div style="font-weight:600; font-size:13.5px; margin-bottom:10px;">${i+1}. ${q.q}</div>
+      ${q.options.map((o,oi)=>`<div class="qopt ${oi===q.correct?"correct":(oi===chosen?"incorrect":"")}">${o} ${oi===q.correct?"✓":(oi===chosen?"✕":"")}</div>`).join("")}
+    </div>`}).join("")}
+  </div></div>${footer()}`;
+}
+
+function viewSearch(){
+  const q = (state.search||"").toLowerCase();
+  const resHits = RESOURCES.filter(r=>r.status==="approved" && (r.title.toLowerCase().includes(q)||r.subject.toLowerCase().includes(q)||r.chapter.toLowerCase().includes(q)));
+  const doubtHits = DOUBTS.filter(d=>d.title.toLowerCase().includes(q)||d.subject.toLowerCase().includes(q));
+  return `${navBar()}<div class="pagewrap"><div class="wrap">
+    <div class="section-title"><h2>Search results for "${state.search}"</h2></div>
+    <h3 style="font-size:15px; margin-bottom:10px;">Resources (${resHits.length})</h3>
+    <div class="grid cols-3" style="margin-bottom:26px;">${resHits.length?resHits.map(resCard).join(""):`<div class="empty">No matching resources.</div>`}</div>
+    <h3 style="font-size:15px; margin-bottom:10px;">Doubts (${doubtHits.length})</h3>
+    <div class="card">${doubtHits.length? doubtHits.map(d=>`<div style="padding:10px 0; border-bottom:1px solid var(--border); cursor:pointer;" onclick="nav('doubtDetail',{id:'${d.id}'})">${d.title} <span class="small muted">· ${d.subject}</span></div>`).join("") : `<div class="empty">No matching doubts.</div>`}</div>
+  </div></div>${footer()}`;
+}
+
+/* ---------------- MAIN RENDER ---------------- */
+function render(){
+  document.documentElement.setAttribute("data-theme", state.theme);
+  const app = document.getElementById("app");
+  let html = "";
+  switch(state.route){
+    case "landing": html = viewLanding(); break;
+    case "login": html = viewLogin(); break;
+    case "signup": html = viewSignup(); break;
+    case "dashboard": html = viewDashboard(); break;
+    case "marketplace": html = viewMarketplace(); break;
+    case "resource": html = viewResource(state.params.id); break;
+    case "doubts": html = viewDoubts(state.params.compose); break;
+    case "doubtDetail": html = viewDoubtDetail(state.params.id); break;
+    case "assistant": html = viewAssistant(); break;
+    case "focus": html = viewFocus(); break;
+    case "library": html = viewLibrary(); break;
+    case "store": html = viewStore(); break;
+    case "storeDashboard": html = viewStoreDashboard(); break;
+    case "storeMarketplace": html = viewStoreMarketplace(); break;
+    case "premium": html = viewPremium(); break;
+    case "storeOrders": html = viewStoreOrders(); break;
+    case "seller": html = viewSeller(); break;
+    case "sellerUpload": html = viewSellerUpload(); break;
+    case "sellerResult": html = viewSellerResult(state.params.id); break;
+    case "admin": html = viewAdmin(); break;
+    case "profile": html = viewProfile(); break;
+    case "quizSetup": html = viewQuizSetup(state.params.id); break;
+    case "quizTake": html = viewQuizTake(); break;
+    case "quizResult": html = viewQuizResult(); break;
+    case "search": html = viewSearch(); break;
+    default: html = viewLanding();
+  }
+  app.innerHTML = (usingRealBackend? "" : `<div style="background:#7A2E2E; color:#fff; text-align:center; padding:8px 16px; font-size:12.5px; font-weight:600;">⚠️ Offline demo mode — Supabase isn't configured yet, so nothing will be saved permanently. See the setup instructions to connect a real backend.</div>`) + html;
+  if(state.route==="assistant") renderChatLog();
+  if(state.route==="focus" && state.facecamActive && facecamStream){
+    const v = document.getElementById("facecamPreview");
+    if(v) v.srcObject = facecamStream;
+  }
+  scheduleSave();
+}
+
+async function boot(){
+  try{
+    if(usingRealBackend){
+      // Do not query RLS-protected kv data during anonymous boot.
+      // Authenticated data is loaded after login/session restoration.
+    } else {
+      const raw = await Store.get("platform:catalog", true);
+      if(raw){
+        const data = JSON.parse(raw);
+        if(data.RESOURCES) { RESOURCES.length=0; RESOURCES.push(...data.RESOURCES); }
+        if(data.DOUBTS) { DOUBTS.length=0; DOUBTS.push(...data.DOUBTS); }
+        if(data.ADMIN_PENDING) { ADMIN_PENDING.length=0; ADMIN_PENDING.push(...data.ADMIN_PENDING); }
+        if(data.ADMIN_REPORTS) { ADMIN_REPORTS.length=0; ADMIN_REPORTS.push(...data.ADMIN_REPORTS); }
+        if(data.REVIEWS) Object.assign(REVIEWS, data.REVIEWS);
+      }
+    }
+  }catch(e){ /* first run, or storage unavailable — start fresh, that's fine */ }
+  await loadPricing();
+  render();
+}
+boot();
+</script>
+</body>
+</html>
