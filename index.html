@@ -342,18 +342,8 @@ try{
    storage (this session only) if Supabase isn't configured. */
 const _memoryStore = { shared:{}, local:{} };
 const Store = {
-  async hasAuthenticatedSession(){
-    if(!usingRealBackend || !sb) return true;
-    try{
-      const { data } = await sb.auth.getSession();
-      return !!data?.session;
-    }catch(e){ return false; }
-  },
   async get(key){
     if(usingRealBackend){
-      // Never query the RLS-protected kv table before Supabase auth exists.
-      // Login/signup must authenticate first; boot may run anonymously.
-      if(!(await this.hasAuthenticatedSession())) return null;
       const { data, error } = await sb.from("kv").select("value").eq("key", key).maybeSingle();
       if(error){ console.error("Store.get failed:", error); return null; }
       return data ? data.value : null;
@@ -362,7 +352,6 @@ const Store = {
   },
   async set(key, value){
     if(usingRealBackend){
-      if(!(await this.hasAuthenticatedSession())) return false;
       const { error } = await sb.from("kv").upsert({ key, value });
       if(error){ console.error("Store.set failed:", error); return false; }
       return true;
@@ -372,10 +361,9 @@ const Store = {
   },
   async list(prefix){
     if(usingRealBackend){
-      if(!(await this.hasAuthenticatedSession())) return [];
       const { data, error } = await sb.from("kv").select("key").like("key", prefix+"%");
       if(error){ console.error("Store.list failed:", error); return []; }
-      return (data||[]).map(d=>d.key);
+      return data.map(d=>d.key);
     }
     return Object.keys(_memoryStore.shared).filter(k=>!prefix || k.startsWith(prefix));
   }
@@ -454,6 +442,39 @@ function scheduleSave(){
 }
 
 async function loadAllUsers(){
+  if(usingRealBackend){
+    const [profilesRes, pointsRes] = await Promise.all([
+      sb.from("profiles").select("*"),
+      sb.from("reward_points").select("*")
+    ]);
+    if(profilesRes.error){
+      console.error("loadAllUsers profiles error:", profilesRes.error);
+      toast("Couldn't load users: "+profilesRes.error.message);
+      return;
+    }
+    if(pointsRes.error){
+      console.error("loadAllUsers reward_points error:", pointsRes.error);
+      toast("Couldn't load user points: "+pointsRes.error.message);
+      return;
+    }
+    const pointsByUser = {};
+    (pointsRes.data||[]).forEach(p=>{ pointsByUser[p.user_id] = p.balance ?? 0; });
+    state.allUsersCache = (profilesRes.data||[]).map(p=>({
+      id:p.id,
+      name:p.name || "",
+      class:p.class ?? "—",
+      board:p.board || "—",
+      points:pointsByUser[p.id] ?? 0,
+      reputation:p.reputation ?? 50,
+      firstLogin:p.join_date ? new Date(p.join_date).getTime() : Date.now(),
+      lastLogin:p.created_at ? new Date(p.created_at).getTime() : Date.now(),
+      loginCount:0,
+      status:p.status || "active",
+      owner:p.is_admin === true
+    })).sort((a,b)=>b.lastLogin-a.lastLogin);
+    render();
+    return;
+  }
   const keys = await Store.list("user:", true);
   const list = [];
   for(const k of keys){
@@ -808,7 +829,12 @@ async function loadResourcesFromDB(){
   RESOURCES.length = 0;
   RESOURCES.push(...Object.values(byId));
   // Also update the admin pending queue from the DB (owner-only tab, harmless to compute for everyone).
-  const { data: pending } = await sb.from("resources").select("*, profiles(name)").eq("status","pending");
+  const { data: pending, error } = await sb.from("resources").select("*, profiles(name)").eq("status","pending");
+  if(error){
+    console.error("loadResourcesFromDB pending error:", error);
+    toast("Couldn't load pending resources: "+error.message);
+    return;
+  }
   ADMIN_PENDING.length = 0;
   ADMIN_PENDING.push(...(pending||[]).map(mapDbResource));
   render();
@@ -2592,8 +2618,10 @@ function render(){
 async function boot(){
   try{
     if(usingRealBackend){
-      // Do not query RLS-protected kv data during anonymous boot.
-      // Authenticated data is loaded after login/session restoration.
+      const raw = await Store.get("platform:reports", true);
+      if(raw) ADMIN_REPORTS.push(...JSON.parse(raw));
+      // Resources/doubts load once someone logs in (need their auth context
+      // for RLS-scoped queries like "my own pending resources").
     } else {
       const raw = await Store.get("platform:catalog", true);
       if(raw){
