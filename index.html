@@ -331,7 +331,9 @@ let usingRealBackend = false;
 let sb = null;
 try{
   if(supabaseConfig.url !== "YOUR_SUPABASE_URL" && window.supabase){
-    sb = window.supabase.createClient(supabaseConfig.url, supabaseConfig.anonKey);
+    sb = window.supabase.createClient(supabaseConfig.url, supabaseConfig.anonKey, {
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+    });
     usingRealBackend = true;
   }
 }catch(e){ console.error("Supabase init failed:", e); usingRealBackend = false; }
@@ -397,15 +399,26 @@ async function uploadProductImage(productId, file){
   return data.publicUrl;
 }
 
+function normalizeUsername(value){
+  return (value||"").trim().toLowerCase().replace(/\s+/g," ");
+}
+function validateUsername(value){
+  const username = (value||"").trim();
+  if(username.length < 3) return "Username must be at least 3 characters.";
+  if(username.length > 30) return "Username must be 30 characters or fewer.";
+  if(!/^[A-Za-z0-9][A-Za-z0-9._ -]*$/.test(username)) return "Username can use letters, numbers, spaces, dots, hyphens and underscores.";
+  if(!/[A-Za-z0-9]/.test(username)) return "Username must contain at least one letter or number.";
+  return null;
+}
 function slugEmail(name){ return name.trim().toLowerCase().replace(/[^a-z0-9]+/g,".").replace(/^\.+|\.+$/g,"")+"@vidyaloop.local"; }
 
-function userKey(name){ return "user:"+name.trim().toLowerCase(); }
+function userKey(name){ return "user:"+normalizeUsername(name); }
 
 async function persistUser(){
   if(!state.user) return;
   const u = state.user;
   const record = {
-    name:u.name, class:u.class, board:u.board, bio:u.bio,
+    name:u.name, fullName:u.fullName || u.name, username:u.username || u.name, class:u.class, board:u.board, bio:u.bio,
     points:u.points, reputation:u.reputation, level:u.level, badges:u.badges,
     uploaded:u.uploaded, purchased:u.purchased, saved:u.saved, asked:u.asked, answeredIds:u.answeredIds,
     ratedResources:u.ratedResources, redeemed:u.redeemed, recentlyViewed:u.recentlyViewed,
@@ -413,10 +426,11 @@ async function persistUser(){
     pointsEarnedToday:u.pointsEarnedToday, pointsEarnedDate:u.pointsEarnedDate,
     focusLog: state.focus.log, transactions: state.transactions,
     passwordHash: u._passwordHash,
+    authUserId: u._authUserId || null,
     firstLogin: u._firstLogin || Date.now(), lastLogin: Date.now(),
     loginCount: u._loginCount || 1, status: "active", owner: u.isOwner
   };
-  await Store.set(userKey(u.name), JSON.stringify(record), true);
+  await Store.set(userKey(u.username || u.name), JSON.stringify(record), true);
   if(usingRealBackend && u._authUserId){
     await sb.from("profiles").update({ bio:u.bio, reputation:u.reputation, class:u.class, board:u.board, streak:u.streak }).eq("id", u._authUserId);
   }
@@ -459,9 +473,19 @@ async function loadAllUsers(){
     }
     const pointsByUser = {};
     (pointsRes.data||[]).forEach(p=>{ pointsByUser[p.user_id] = p.balance ?? 0; });
+    const usernameByUser = {};
+    try{
+      const keys = await Store.list("user:");
+      for(const k of keys){
+        const raw = await Store.get(k);
+        if(raw){ try{ const rec = JSON.parse(raw); if(rec.authUserId) usernameByUser[rec.authUserId] = rec.username || k.slice(5); }catch(e){} }
+      }
+    }catch(e){ console.warn("Username index unavailable:", e); }
     state.allUsersCache = (profilesRes.data||[]).map(p=>({
       id:p.id,
       name:p.name || "",
+      fullName:p.name || "",
+      username:usernameByUser[p.id] || p.name || "—",
       class:p.class ?? "—",
       board:p.board || "—",
       points:pointsByUser[p.id] ?? 0,
@@ -770,7 +794,7 @@ async function hashPassword(pw){
 
 function establishSession(name, cls, board, saved, isOwner, loginMeta, accountType){
   state.user = {
-    id: loginMeta.authUserId || uid("u"), name, class: saved?.class || Number(cls) || 9, board: board||saved?.board||"CBSE",
+    id: loginMeta.authUserId || uid("u"), name, username: loginMeta.username || saved?.username || name, fullName: saved?.fullName || name, class: saved?.class || Number(cls) || 9, board: board||saved?.board||"CBSE",
     accountType: accountType || saved?.accountType || "student",
     subjects: SUBJECTS.slice(0,4), bio: saved?.bio || "", avatarColor: colorFor(name||"A"),
     points: saved?.points ?? 50, reputation: saved?.reputation ?? 50, level: saved?.level || "New Member",
@@ -900,39 +924,55 @@ async function fetchAccountData(authUserId){
 }
 
 async function doLogin(){
-  const name = (document.getElementById("loginName").value || "").trim();
+  const username = (document.getElementById("loginName").value || "").trim();
   const cls = document.getElementById("loginClass").value;
   const pass = document.getElementById("loginPass").value;
   const ownerPass = document.getElementById("loginOwnerPass") ? document.getElementById("loginOwnerPass").value : "";
-  if(!name){ toast("Please enter your name."); return; }
+  if(!username){ toast("Please enter your username."); return; }
+  const usernameError = validateUsername(username);
+  if(usernameError){ toast(usernameError); return; }
   if(!pass){ toast("Please enter your password."); return; }
-  let isOwner = resolveIsOwner(name, ownerPass);
 
-  const savedRaw = await Store.get(userKey(name));
-  if(!savedRaw && !usingRealBackend){ toast("No account found with that name yet — please sign up first."); nav("signup"); return; }
+  const savedRaw = await Store.get(userKey(username));
   const saved = savedRaw ? JSON.parse(savedRaw) : null;
+  let isOwner = resolveIsOwner(username, ownerPass) || resolveIsOwner(saved?.fullName || saved?.name || "", ownerPass);
   if(saved && saved.status==="suspended"){ toast("This account has been suspended by an admin."); return; }
 
   if(usingRealBackend){
-    const { data: authData, error } = await sb.auth.signInWithPassword({ email: slugEmail(name), password: pass });
+    const { data: authData, error } = await sb.auth.signInWithPassword({ email: slugEmail(username), password: pass });
     if(error){
-      if(!saved){ toast("No account found with that name yet — please sign up first."); nav("signup"); return; }
-      toast("Incorrect password."); return;
+      toast(saved ? "Incorrect password." : "No account found with that username yet — please sign up first.");
+      return;
     }
     const authUserId = authData.user.id;
+    const { data: profileMatch, error: profileLookupError } = await sb.from("profiles")
+      .select("id,name,account_type,is_admin,status,class,board,bio,reputation,streak").eq("id", authUserId).maybeSingle();
+    if(profileLookupError || !profileMatch){
+      console.error("Profile load after login failed:", profileLookupError);
+      toast("Couldn't load your profile. Please try again.");
+      return;
+    }
+    if(profileMatch.status==="suspended"){ await sb.auth.signOut(); toast("This account has been suspended by an admin."); return; }
     const acct = await fetchAccountData(authUserId);
-    isOwner = isOwner || acct.isAdminFlag;
+    isOwner = isOwner || acct.isAdminFlag || profileMatch.is_admin === true;
     const merged = mergeAccountData(saved, acct);
-    establishSession(name, cls, merged.board||saved?.board, merged, isOwner, {passwordHash:null, authUserId}, acct.accountType);
+    merged.class = profileMatch.class ?? merged.class;
+    merged.board = profileMatch.board ?? merged.board;
+    merged.bio = profileMatch.bio ?? merged.bio;
+    merged.reputation = profileMatch.reputation ?? merged.reputation;
+    merged.streak = profileMatch.streak ?? merged.streak;
+    merged.username = username;
+    merged.fullName = profileMatch.name || username;
+    establishSession(merged.fullName, merged.class ?? cls, merged.board||saved?.board, merged, isOwner, {passwordHash:null, authUserId, username}, profileMatch.account_type || acct.accountType);
     return;
   }
 
-  // Offline fallback (no Supabase configured yet) — same as before, session-only.
+  if(!saved){ toast("No account found with that username yet — please sign up first."); nav("signup"); return; }
   if(!isOwner){
     const hash = await hashPassword(pass);
     if(hash !== saved.passwordHash){ toast("Incorrect password."); return; }
   }
-  establishSession(name, cls, saved.board, saved, isOwner, {passwordHash: saved.passwordHash});
+  establishSession(saved.fullName || saved.name || username, saved.class ?? cls, saved.board, saved, isOwner, {passwordHash: saved.passwordHash, username}, saved.accountType);
 }
 window.doLogin = doLogin;
 
@@ -947,29 +987,42 @@ function mergeAccountData(kvSaved, acct){
 }
 
 async function doSignup(){
-  const name = (document.getElementById("signupName").value || "").trim();
+  const username = (document.getElementById("signupName").value || "").trim();
+  const fullName = (document.getElementById("signupFullName").value || "").trim();
+  const name = fullName;
   const cls = document.getElementById("signupClass").value;
   const board = document.getElementById("signupBoard").value;
   const pass = document.getElementById("signupPass").value;
   const accountType = document.querySelector('input[name="signupAccountType"]:checked')?.value || "student";
   const ownerPass = document.getElementById("signupOwnerPass") ? document.getElementById("signupOwnerPass").value : "";
-  if(!name){ toast("Please enter your name."); return; }
+  if(!fullName){ toast("Please enter your full name."); return; }
+  if(!username){ toast("Please choose a username."); return; }
+  const usernameError = validateUsername(username);
+  if(usernameError){ toast(usernameError); return; }
   if(!pass || pass.length<6){ toast("Please choose a password of at least 6 characters."); return; }
-  let isOwner = resolveIsOwner(name, ownerPass);
+  let isOwner = resolveIsOwner(fullName, ownerPass) || resolveIsOwner(username, ownerPass);
 
-  const savedRaw = await Store.get(userKey(name));
+  const savedRaw = await Store.get(userKey(username));
   if(savedRaw && !isOwner && !usingRealBackend){ toast("An account with this name already exists — please log in instead."); nav("login"); return; }
   const saved = savedRaw ? JSON.parse(savedRaw) : null;
 
   if(usingRealBackend){
-    // The Supabase trigger reads name/account_type from this metadata and
-    // creates the profiles + reward_points rows automatically.
+    // Usernames are the login identifier. The deterministic auth email makes the
+    // username unique at the authentication layer; the kv username index is also
+    // checked first for a friendly duplicate message.
+    const existingUsernameRecord = await Store.get(userKey(username));
+    if(existingUsernameRecord){
+      toast("That username is already taken — please choose another.");
+      return;
+    }
+    // The trigger keeps the real full name in profiles.name. Username is kept
+    // in auth metadata and the per-user kv record, so no schema migration is needed.
     const { data: authData, error } = await sb.auth.signUp({
-      email: slugEmail(name), password: pass,
-      options: { data: { name, full_name: name, account_type: accountType } }
+      email: slugEmail(username), password: pass,
+      options: { data: { name: fullName, username, full_name: fullName, account_type: accountType } }
     });
     if(error){
-      if(/already registered|already exists/i.test(error.message)){ toast("An account with this name already exists — please log in instead."); nav("login"); return; }
+      if(/already registered|already exists/i.test(error.message)){ toast("That username is already taken — please choose another."); return; }
       toast("Signup failed: "+error.message); return;
     }
     const authUserId = authData.user.id;
@@ -980,7 +1033,9 @@ async function doSignup(){
     const acct = await fetchAccountData(authUserId);
     isOwner = isOwner || acct.isAdminFlag;
     const merged = mergeAccountData(saved, acct);
-    establishSession(name, cls, board, merged, isOwner, {passwordHash:null, authUserId}, accountType);
+    merged.username = username;
+    merged.fullName = fullName;
+    establishSession(fullName, cls, board, merged, isOwner, {passwordHash:null, authUserId, username}, accountType);
     return;
   }
 
@@ -1770,7 +1825,7 @@ function viewLogin(){
     <div style="text-align:center; margin-bottom:6px;">${loopIcon(40)}</div>
     <h2 style="text-align:center; margin-bottom:4px;">Welcome back</h2>
     <p class="muted small" style="text-align:center; margin-bottom:22px;">Log in to continue your learning loop.</p>
-    <div class="field"><label>Full name</label><input id="loginName" placeholder="e.g. Aarav Sharma" oninput="checkOwnerReveal('login')" onkeydown="if(event.key==='Enter') doLogin()"></div>
+    <div class="field"><label>Username</label><input id="loginName" placeholder="e.g. AaravSharma" oninput="checkOwnerReveal('login')" onkeydown="if(event.key==='Enter') doLogin()"></div>
     <input id="loginClass" type="hidden" value="9">
     <div class="field"><label>Password</label><input id="loginPass" type="password" placeholder="Your password" onkeydown="if(event.key==='Enter') doLogin()"></div>
     <div id="loginOwnerWrap" style="display:none;"><div class="field"><label>Owner passcode</label><input id="loginOwnerPass" type="password" placeholder="Owner passcode" onkeydown="if(event.key==='Enter') doLogin()"></div></div>
@@ -1783,7 +1838,8 @@ function viewSignup(){
     <div style="text-align:center; margin-bottom:6px;">${loopIcon(40)}</div>
     <h2 style="text-align:center; margin-bottom:4px;">Create your account</h2>
     <p class="muted small" style="text-align:center; margin-bottom:22px;">Join the loop — create, help, and earn.</p>
-    <div class="field"><label>Full name</label><input id="signupName" placeholder="e.g. Meera Iyer" oninput="checkOwnerReveal('signup')"></div>
+    <div class="field"><label>Full Name</label><input id="signupFullName" placeholder="e.g. Meera Iyer"></div>
+    <div class="field"><label>Username</label><input id="signupName" placeholder="e.g. MeeraIyer" oninput="checkOwnerReveal('signup')"></div>
     <div class="field">
       <label>I am signing up as</label>
       <div style="display:flex; gap:10px;">
@@ -1795,7 +1851,6 @@ function viewSignup(){
       <div class="field"><label>Class</label><select id="signupClass">${CLASSES.map(c=>`<option value="${c}">Class ${c}</option>`).join("")}</select></div>
       <div class="field"><label>Board</label><select id="signupBoard"><option>CBSE</option><option>ICSE</option><option>State Board</option></select></div>
     </div>
-    <div class="field"><label>Email</label><input id="signupEmail" type="email" placeholder="you@school.edu"></div>
     <div id="signupOwnerWrap" style="display:none;"><div class="field"><label>Owner passcode</label><input id="signupOwnerPass" type="password" placeholder="Owner passcode" onkeydown="if(event.key==='Enter') doSignup()"></div></div>
     <div class="field"><label>Password</label><input id="signupPass" type="password" placeholder="Create a password" onkeydown="if(event.key==='Enter') doSignup()"></div>
     <button class="btn btn-primary btn-block" type="button" onclick="doSignup()">Create account</button>
@@ -2336,7 +2391,7 @@ function viewAdmin(){
       body = `<div class="empty"><div class="ic">👤</div>Nobody has logged in yet — this list fills up as real students sign in.</div>`;
     } else {
       body = `<div class="section-title"><span class="small muted">${cache.length} registered user${cache.length!==1?"s":""}${usingRealBackend?" · saved permanently":" · this browser session only"}</span><button class="btn btn-ghost btn-sm" onclick="loadAllUsers()">↻ Refresh</button></div>
-      <div class="card"><table><tr><th>User</th><th>Class</th><th>Board</th><th>Points</th><th>Reputation</th><th>First logged in</th><th>Last seen</th><th>Logins</th><th>Status</th><th></th></tr>${cache.map(ru=>`<tr><td>${ru.name}${ru.owner?' <span class="tag tag-amber">Owner</span>':""}</td><td>${ru.class}</td><td>${ru.board}</td><td class="mono">${ru.points}</td><td class="mono">${ru.reputation}</td><td class="small muted">${new Date(ru.firstLogin).toLocaleString()}</td><td class="small muted">${timeAgo(ru.lastLogin)}</td><td class="mono">${ru.loginCount}</td><td>${ru.status==="active"?'<span class="tag tag-green">Active</span>':'<span class="tag tag-pink">Suspended</span>'}</td><td>${ru.owner?"":`<button class="btn btn-outline btn-sm" onclick="adminToggleUser('${ru.name.replace(/'/g,"")}')">${ru.status==="active"?"Suspend":"Reinstate"}</button>`}</td></tr>`).join("")}</table></div>`;
+      <div class="card"><table><tr><th>Full Name</th><th>Username</th><th>Class</th><th>Board</th><th>Points</th><th>Reputation</th><th>First logged in</th><th>Last seen</th><th>Logins</th><th>Status</th><th></th></tr>${cache.map(ru=>`<tr><td>${ru.fullName || ru.name}${ru.owner?' <span class="tag tag-amber">Owner</span>':""}</td><td>${ru.username || "—"}</td><td>${ru.class}</td><td>${ru.board}</td><td class="mono">${ru.points}</td><td class="mono">${ru.reputation}</td><td class="small muted">${new Date(ru.firstLogin).toLocaleString()}</td><td class="small muted">${timeAgo(ru.lastLogin)}</td><td class="mono">${ru.loginCount}</td><td>${ru.status==="active"?'<span class="tag tag-green">Active</span>':'<span class="tag tag-pink">Suspended</span>'}</td><td>${ru.owner?"":`<button class="btn btn-outline btn-sm" onclick="adminToggleUser('${ru.name.replace(/'/g,"")}')">${ru.status==="active"?"Suspend":"Reinstate"}</button>`}</td></tr>`).join("")}</table></div>`;
     }
   } else if(tab==="pricing"){
     body = `<div class="card">
@@ -2615,11 +2670,69 @@ function render(){
   scheduleSave();
 }
 
+async function restoreSupabaseSession(){
+  if(!usingRealBackend || !sb || state.user || restoringSession) return !!state.user;
+  restoringSession = true;
+  try{
+    // Supabase persists the auth session in the browser by default. Restore it
+    // before rendering the login page so a refresh does not look like a logout.
+    const { data: sessionData, error: sessionError } = await sb.auth.getSession();
+    if(sessionError){ console.error("Session restore failed:", sessionError); return false; }
+    const authUser = sessionData?.session?.user;
+    if(!authUser) return false;
+
+    const { data: profile, error: profileError } = await sb.from("profiles")
+      .select("*").eq("id", authUser.id).maybeSingle();
+    if(profileError){ console.error("Session profile load failed:", profileError); return false; }
+    if(!profile){ console.error("Session restore: profile not found"); return false; }
+
+    const acct = await fetchAccountData(authUser.id);
+    const saved = {
+      name: profile.name || authUser.user_metadata?.name || authUser.email?.split("@")[0] || "User",
+      fullName: profile.name || authUser.user_metadata?.full_name || authUser.user_metadata?.name || "User",
+      username: authUser.user_metadata?.username || "",
+      class: profile.class, board: profile.board, accountType: profile.account_type,
+      bio: profile.bio || "", reputation: acct.reputation, points: acct.points,
+      streak: acct.streak, is_admin: profile.is_admin === true
+    };
+    const name = saved.name;
+    const username = saved.username || name;
+    saved.username = username;
+    const isOwner = profile.is_admin === true || resolveIsOwner(name, "") || resolveIsOwner(username, "");
+    establishSession(name, saved.class, saved.board, saved, isOwner,
+      {passwordHash:null, authUserId:authUser.id, username}, saved.accountType);
+    return true;
+  }catch(e){
+    console.error("Session restore failed:", e);
+    return false;
+  }finally{
+    restoringSession = false;
+  }
+}
+
+let authListenerReady = false;
+let restoringSession = false;
+if(usingRealBackend && sb){
+  sb.auth.onAuthStateChange((event, session)=>{
+    if(event === "SIGNED_OUT"){
+      return;
+    }
+    if((event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "INITIAL_SESSION") && session && !state.user && !restoringSession){
+      // Defer the database reads outside the auth callback to avoid auth-lock
+      // contention in Supabase JS.
+      setTimeout(()=>{ if(!state.user) restoreSupabaseSession(); }, 0);
+    }
+  });
+  authListenerReady = true;
+}
+
 async function boot(){
   try{
     if(usingRealBackend){
       const raw = await Store.get("platform:reports", true);
       if(raw) ADMIN_REPORTS.push(...JSON.parse(raw));
+      // Restore the persisted Supabase session before showing the landing page.
+      if(await restoreSupabaseSession()) return;
       // Resources/doubts load once someone logs in (need their auth context
       // for RLS-scoped queries like "my own pending resources").
     } else {
