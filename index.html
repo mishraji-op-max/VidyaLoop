@@ -1219,27 +1219,197 @@ async function saveAdminPricing(){
 window.saveAdminPricing = saveAdminPricing;
 
 async function redeemPromoCode(){
-  toast("Promo codes aren't part of this database yet — ask your admin to add the promo_codes tables to enable this.");
+  if(!usingRealBackend) return toast("Connect Supabase to redeem promo codes.");
+  if(!state.user?._authUserId) return nav("login");
+
+  const input = document.getElementById("promoCodeInput");
+  const code = (input?.value || "").trim().toUpperCase();
+  if(!code) return toast("Enter a promo code.");
+
+  const { data: promo, error: promoErr } = await sb.from("promo_codes")
+    .select("*")
+    .eq("code", code)
+    .eq("active", true)
+    .maybeSingle();
+
+  if(promoErr){
+    console.error("Promo lookup failed:", promoErr);
+    return toast("Couldn't check promo code: "+promoErr.message);
+  }
+  if(!promo) return toast("Invalid or inactive promo code.");
+
+  if(promo.expiry_date && new Date(promo.expiry_date) <= new Date()){
+    return toast("This promo code has expired.");
+  }
+
+  if(promo.specific_user_id && promo.specific_user_id !== state.user._authUserId){
+    return toast("This promo code is assigned to another user.");
+  }
+
+  if(promo.new_users_only){
+    const { data: profile, error: profileErr } = await sb.from("profiles")
+      .select("join_date")
+      .eq("id", state.user._authUserId)
+      .maybeSingle();
+    if(profileErr) return toast("Couldn't verify account eligibility: "+profileErr.message);
+    if(!profile?.join_date) return toast("Couldn't verify whether this is a new account.");
+    const ageMs = Date.now() - new Date(profile.join_date).getTime();
+    if(ageMs > 7*24*60*60*1000) return toast("This promo code is for new users only.");
+  }
+
+  const { data: previous, error: previousErr } = await sb.from("promo_code_redemptions")
+    .select("id")
+    .eq("promo_code_id", promo.id)
+    .eq("user_id", state.user._authUserId)
+    .maybeSingle();
+  if(previousErr) return toast("Couldn't check your redemption history: "+previousErr.message);
+  if(previous) return toast("You have already used this promo code.");
+
+  if(promo.max_uses !== null && promo.max_uses !== undefined){
+    const { count, error: countErr } = await sb.from("promo_code_redemptions")
+      .select("id", {count:"exact", head:true})
+      .eq("promo_code_id", promo.id);
+    if(countErr) return toast("Couldn't check promo usage: "+countErr.message);
+    if((count || 0) >= promo.max_uses) return toast("This promo code has reached its usage limit.");
+  }
+
+  const points = Number(promo.rp_bonus) || 0;
+  if(points <= 0) return toast("This promo code has no Reward Point bonus.");
+
+  const { error: rpcErr } = await sb.rpc("add_reward_points", {
+    target_user_id: state.user._authUserId,
+    point_amount: points,
+    point_reason: "Promo code: "+promo.code
+  });
+  if(rpcErr){
+    console.error("Promo RP award failed:", rpcErr);
+    return toast("Reward Points could not be added: "+rpcErr.message);
+  }
+
+  const { error: redemptionErr } = await sb.from("promo_code_redemptions").insert({
+    promo_code_id: promo.id,
+    user_id: state.user._authUserId,
+    reward_points: points
+  });
+
+  if(redemptionErr){
+    console.error("Promo redemption record failed:", redemptionErr);
+    return toast("Points were added, but the redemption record could not be saved. Please contact the admin.");
+  }
+
+  state.user.points += points;
+  if(input) input.value = "";
+  loadPointTransactions();
+  toast("Promo redeemed! +"+points+" Reward Points.");
+  render();
 }
 window.redeemPromoCode = redeemPromoCode;
 
 async function loadPromoAdminData(){
-  // Not available in the current schema (no promo_codes/promo_code_redemptions tables).
-  state.promoCodes = [];
-  state.redemptions = [];
+  if(!usingRealBackend){
+    state.promoCodes = [];
+    state.redemptions = [];
+    render();
+    return;
+  }
+
+  const [codesRes, redRes, profilesRes] = await Promise.all([
+    sb.from("promo_codes").select("*").order("created_at",{ascending:false}),
+    sb.from("promo_code_redemptions").select("*").order("redeemed_at",{ascending:false}),
+    sb.from("profiles").select("id,name")
+  ]);
+
+  if(codesRes.error){
+    console.error("loadPromoAdminData promo_codes error:", codesRes.error);
+    return toast("Couldn't load promo codes: "+codesRes.error.message);
+  }
+  if(redRes.error){
+    console.error("loadPromoAdminData redemptions error:", redRes.error);
+    return toast("Couldn't load redemptions: "+redRes.error.message);
+  }
+
+  const codeById = {};
+  (codesRes.data||[]).forEach(c=>codeById[c.id]=c);
+
+  const nameById = {};
+  (profilesRes.data||[]).forEach(p=>nameById[p.id]=p.name||"—");
+
+  state.promoCodes = codesRes.data || [];
+  state.redemptions = (redRes.data||[]).map(r=>({
+    ...r,
+    code: codeById[r.promo_code_id]?.code || "—",
+    user_name: nameById[r.user_id] || r.user_id
+  }));
   render();
 }
 window.loadPromoAdminData = loadPromoAdminData;
 
 async function createPromoCode(){
-  toast("Promo codes aren't part of this database yet — ask your admin to add the promo_codes tables to enable this.");
+  if(!usingRealBackend) return toast("Connect Supabase to create promo codes.");
+
+  const code = (document.getElementById("newPromoCode")?.value || "").trim().toUpperCase();
+  const description = (document.getElementById("newPromoDesc")?.value || "").trim();
+  const premiumDays = Math.max(0, Number(document.getElementById("newPromoDays")?.value) || 0);
+  const rpBonus = Math.max(0, Number(document.getElementById("newPromoRp")?.value) || 0);
+  const maxRaw = (document.getElementById("newPromoMaxUses")?.value || "").trim();
+  const maxUses = maxRaw === "" ? null : Math.max(1, Number(maxRaw) || 0);
+  const expiryRaw = document.getElementById("newPromoExpiry")?.value || "";
+  const newUsersOnly = !!document.getElementById("newPromoNewUsersOnly")?.checked;
+  const specificUsername = (document.getElementById("newPromoSpecificUser")?.value || "").trim();
+
+  if(!code) return toast("Enter a promo code.");
+  if(!/^[A-Z0-9._-]{3,40}$/.test(code)) return toast("Use 3–40 letters, numbers, dots, underscores or hyphens.");
+  if(rpBonus <= 0) return toast("RP bonus must be greater than 0.");
+  if(maxRaw !== "" && maxUses < 1) return toast("Max uses must be at least 1.");
+
+  let specificUserId = null;
+  if(specificUsername){
+    const cached = (state.allUsersCache||[]).find(u=>normalizeUsername(u.username||"")===normalizeUsername(specificUsername));
+    if(!cached?.id) return toast("That username could not be found. Leave it blank for everyone.");
+    specificUserId = cached.id;
+  }
+
+  const payload = {
+    code,
+    description,
+    premium_days: premiumDays,
+    rp_bonus: rpBonus,
+    max_uses: maxUses,
+    expiry_date: expiryRaw ? new Date(expiryRaw+"T23:59:59").toISOString() : null,
+    active: true,
+    new_users_only: newUsersOnly,
+    specific_user_id: specificUserId
+  };
+
+  const { error } = await sb.from("promo_codes").insert(payload);
+  if(error){
+    console.error("createPromoCode failed:", error);
+    if(/duplicate|unique/i.test(error.message)) return toast("That promo code already exists.");
+    return toast("Create failed: "+error.message);
+  }
+
+  toast("Promo code created: "+code);
+  await loadPromoAdminData();
 }
 window.createPromoCode = createPromoCode;
 
-async function togglePromoActive(){ toast("Not available with the current database schema."); }
+async function togglePromoActive(id, current){
+  if(!usingRealBackend) return toast("Connect Supabase to manage promo codes.");
+  const { error } = await sb.from("promo_codes").update({active: !current}).eq("id", id);
+  if(error) return toast("Update failed: "+error.message);
+  toast((!current ? "Promo code enabled." : "Promo code disabled."));
+  loadPromoAdminData();
+}
 window.togglePromoActive = togglePromoActive;
 
-async function deletePromoCode(){ toast("Not available with the current database schema."); }
+async function deletePromoCode(id){
+  if(!usingRealBackend) return toast("Connect Supabase to manage promo codes.");
+  if(!confirm("Delete this promo code? Existing redemption records will also be removed.")) return;
+  const { error } = await sb.from("promo_codes").delete().eq("id", id);
+  if(error) return toast("Delete failed: "+error.message);
+  toast("Promo code deleted.");
+  loadPromoAdminData();
+}
 window.deletePromoCode = deletePromoCode;
 
 async function loadAdminStores(){
@@ -2439,7 +2609,11 @@ function viewAdmin(){
         <div class="field"><label>Max uses (blank = unlimited)</label><input id="newPromoMaxUses" type="number" placeholder="20"></div>
         <div class="field"><label>Expiry date</label><input id="newPromoExpiry" type="date"></div>
       </div>
+      <div class="formrow">
+        <div class="field"><label>Specific username (optional)</label><input id="newPromoSpecificUser" placeholder="Leave blank for everyone"></div>
+      </div>
       <label class="small" style="display:flex; align-items:center; gap:8px; margin-bottom:14px;"><input id="newPromoNewUsersOnly" type="checkbox"> New users only</label>
+      <p class="small muted" style="margin-bottom:14px;">Premium days are stored with the code, but premium activation is not applied until the subscription system exists.</p>
       <button class="btn btn-primary" onclick="createPromoCode()">Create code</button>
     </div>
     <div class="section-title"><h3 style="font-size:15px;">Existing codes</h3></div>
@@ -2453,7 +2627,7 @@ function viewAdmin(){
   }
   return `${navBar()}<div class="pagewrap"><div class="wrap">
     <div class="section-title"><h2>Admin Panel</h2></div>
-    <div class="tabbar">${tabs.map(([k,l])=>`<button class="tabbtn ${tab===k?"active":""}" onclick="state.adminTab='${k}'; ${k==='users'?'loadAllUsers();':k==='storeOwners'?'loadAdminStores();':k==='promoCodes'?'loadPromoAdminData();':k==='subscriptions'?'loadAdminSubs();':'render();'}">${l}</button>`).join("")}</div>
+    <div class="tabbar">${tabs.map(([k,l])=>`<button class="tabbtn ${tab===k?"active":""}" onclick="state.adminTab='${k}'; ${k==='users'?'loadAllUsers();':k==='storeOwners'?'loadAdminStores();':k==='promoCodes'?'loadAllUsers().then(()=>loadPromoAdminData());':k==='subscriptions'?'loadAdminSubs();':'render();'}">${l}</button>`).join("")}</div>
     ${body}
   </div></div>${footer()}`;
 }
