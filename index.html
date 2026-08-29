@@ -739,7 +739,7 @@ const ADMIN_CONFIG = {
   reportPenalty: 8,
   notHelpfulPenalty: 3,
   maxResourcePrice: 150,
-  autoApproveThreshold: 70,
+  autoApproveThreshold: 20,
   dailyPointCap: 40
 };
 function localStorageGet(){ return null; } // no persistent storage in this sandbox demo
@@ -1657,7 +1657,12 @@ async function doUploadResource(){
   if(!chapter.trim()) return toast("Please add the chapter/topic this resource covers.");
   const payload = { title, description, chapter, type:document.getElementById("uploadType").value, subject:document.getElementById("uploadSubject").value, pages:Number(document.getElementById("uploadPages").value)||6, class:Number(document.getElementById("uploadClass").value) };
   const evalResult = AIService.evaluateResource(payload);
-  const status = evalResult.score>=ADMIN_CONFIG.autoApproveThreshold ? "pending" : "needs_improvement";
+  // AI quality gate: scores below 20 are not accepted; all scores 20-100 go to admin review.
+  if(evalResult.score < 20){
+    toast("This resource scored "+evalResult.score+"/100 and cannot be submitted. Please improve the notes and try again.");
+    return;
+  }
+  const status = "pending";
 
   if(usingRealBackend){
     const row = {
@@ -2536,7 +2541,7 @@ function viewAdmin(){
       <div class="field"><label>Accepted-answer bonus (points)</label><input type="number" value="${ADMIN_CONFIG.acceptedBonus}" onchange="updateConfig('acceptedBonus',this.value)"></div>
       <div class="field"><label>Reputation penalty (upheld report / rejection)</label><input type="number" value="${ADMIN_CONFIG.reportPenalty}" onchange="updateConfig('reportPenalty',this.value)"></div>
       <div class="field"><label>Max resource price (points)</label><input type="number" value="${ADMIN_CONFIG.maxResourcePrice}" onchange="updateConfig('maxResourcePrice',this.value)"></div>
-      <div class="field"><label>Auto-approve AI score threshold</label><input type="number" value="${ADMIN_CONFIG.autoApproveThreshold}" onchange="updateConfig('autoApproveThreshold',this.value)"></div>
+      <div class="field"><label>Minimum AI quality score to submit</label><input type="number" value="${ADMIN_CONFIG.autoApproveThreshold}" onchange="updateConfig('autoApproveThreshold',this.value)"></div>
       <div class="field"><label>Daily Reward Point earning cap (anti-abuse)</label><input type="number" value="${ADMIN_CONFIG.dailyPointCap}" onchange="updateConfig('dailyPointCap',this.value)"></div>
       <p class="small muted">These rules are live — changing a value here changes what students earn/pay from this point on.</p>
     </div>
