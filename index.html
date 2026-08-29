@@ -1226,80 +1226,36 @@ async function redeemPromoCode(){
   const code = (input?.value || "").trim().toUpperCase();
   if(!code) return toast("Enter a promo code.");
 
-  const { data: promo, error: promoErr } = await sb.from("promo_codes")
-    .select("*")
-    .eq("code", code)
-    .eq("active", true)
-    .maybeSingle();
+  const { data, error } = await sb.rpc("redeem_promo_code", { p_code: code });
 
-  if(promoErr){
-    console.error("Promo lookup failed:", promoErr);
-    return toast("Couldn't check promo code: "+promoErr.message);
-  }
-  if(!promo) return toast("Invalid or inactive promo code.");
-
-  if(promo.expiry_date && new Date(promo.expiry_date) <= new Date()){
-    return toast("This promo code has expired.");
+  if(error){
+    console.error("redeem_promo_code failed:", error);
+    const msg = error.message || "Promo code could not be redeemed.";
+    return toast(msg);
   }
 
-  if(promo.specific_user_id && promo.specific_user_id !== state.user._authUserId){
-    return toast("This promo code is assigned to another user.");
-  }
+  const points = Number(data?.points_awarded || 0);
+  if(points <= 0) return toast("Promo code redeemed, but no Reward Points were awarded.");
 
-  if(promo.new_users_only){
-    const { data: profile, error: profileErr } = await sb.from("profiles")
-      .select("join_date")
-      .eq("id", state.user._authUserId)
-      .maybeSingle();
-    if(profileErr) return toast("Couldn't verify account eligibility: "+profileErr.message);
-    if(!profile?.join_date) return toast("Couldn't verify whether this is a new account.");
-    const ageMs = Date.now() - new Date(profile.join_date).getTime();
-    if(ageMs > 7*24*60*60*1000) return toast("This promo code is for new users only.");
-  }
-
-  const { data: previous, error: previousErr } = await sb.from("promo_code_redemptions")
-    .select("id")
-    .eq("promo_code_id", promo.id)
-    .eq("user_id", state.user._authUserId)
-    .maybeSingle();
-  if(previousErr) return toast("Couldn't check your redemption history: "+previousErr.message);
-  if(previous) return toast("You have already used this promo code.");
-
-  if(promo.max_uses !== null && promo.max_uses !== undefined){
-    const { count, error: countErr } = await sb.from("promo_code_redemptions")
-      .select("id", {count:"exact", head:true})
-      .eq("promo_code_id", promo.id);
-    if(countErr) return toast("Couldn't check promo usage: "+countErr.message);
-    if((count || 0) >= promo.max_uses) return toast("This promo code has reached its usage limit.");
-  }
-
-  const points = Number(promo.rp_bonus) || 0;
-  if(points <= 0) return toast("This promo code has no Reward Point bonus.");
-
-  const { error: rpcErr } = await sb.rpc("add_reward_points", {
-    target_user_id: state.user._authUserId,
-    point_amount: points,
-    point_reason: "Promo code: "+promo.code
-  });
-  if(rpcErr){
-    console.error("Promo RP award failed:", rpcErr);
-    return toast("Reward Points could not be added: "+rpcErr.message);
-  }
-
-  const { error: redemptionErr } = await sb.from("promo_code_redemptions").insert({
-    promo_code_id: promo.id,
-    user_id: state.user._authUserId,
-    reward_points: points
-  });
-
-  if(redemptionErr){
-    console.error("Promo redemption record failed:", redemptionErr);
-    return toast("Points were added, but the redemption record could not be saved. Please contact the admin.");
-  }
-
-  state.user.points += points;
   if(input) input.value = "";
-  loadPointTransactions();
+
+  // Reload the authoritative balance/transactions from Supabase immediately.
+  try{
+    const { data: rp, error: rpErr } = await sb.from("reward_points")
+      .select("balance")
+      .eq("user_id", state.user._authUserId)
+      .maybeSingle();
+
+    if(!rpErr && rp && typeof rp.balance === "number"){
+      state.user.points = rp.balance;
+    } else {
+      state.user.points += points;
+    }
+  }catch(e){
+    state.user.points += points;
+  }
+
+  await loadPointTransactions();
   toast("Promo redeemed! +"+points+" Reward Points.");
   render();
 }
