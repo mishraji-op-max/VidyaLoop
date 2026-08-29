@@ -640,29 +640,39 @@ const AIService = {
     const rawQ = query.trim();
     const q = rawQ.toLowerCase();
 
-    // Intent 1: summarize/explain a pasted passage
+    // Intent 1: summarize/explain pasted material
     const explicitSummarize = /^(summarize|summarise|explain this|tldr|tl;dr)[:\s]/i.test(rawQ);
     const looksLikePastedContent = rawQ.split(/\s+/).length > 45;
     if(explicitSummarize || looksLikePastedContent){
       const content = rawQ.replace(/^(summarize|summarise|explain this|tldr|tl;dr)[:\s]*/i,'');
-      if(content.split(/\s+/).length < 15){
-        return {text:"Paste a longer passage (a paragraph or more) and I'll summarize and explain the key points for you.", resources:[]};
-      }
+      if(content.split(/\s+/).length < 15) return {text:"Paste a longer passage and I'll turn it into concise study notes.", resources:[]};
       const summary = AIService.summarize(content);
-      return {text:`Here's a summary of what you shared:\n\n${summary}\n\nWant me to explain a specific part further, or generate a quick quiz from it?`, resources:[]};
+      return {text:`Study notes from what you shared:\n\n${summary}\n\nI can also help turn this into revision points or a quiz.`, resources:[]};
     }
 
-    // Intent 2: answer a conceptual doubt directly
-    const looksLikeSearch = /class\s?\d|under\s?\d+|below\s?\d+|\d+\s?points?|cheapest|cheap notes|best rated|top rated|highest rat|compare/.test(q);
-    const looksLikeQuestion = /^(what|why|how|explain|define|when|who|tell me about)\b/.test(q) || q.endsWith("?");
+    // Intent 2: explicitly ask to derive/make notes
+    const wantsNotes = /\b(make|create|derive|prepare|give|generate|write)\b.*\b(notes|revision notes|study notes|summary|cheat sheet)\b/i.test(rawQ)
+      || /\bnotes\s+(on|for|about)\b/i.test(rawQ);
+    if(wantsNotes){
+      const match = KNOWLEDGE_BASE.find(k=>k.keywords.some(kw=>q.includes(kw)));
+      if(match){
+        const title = match.keywords[0].replace(/\b\w/g,c=>c.toUpperCase());
+        return {text:`Quick revision notes — ${title}\n\n${match.explanation}\n\nKey points to remember:\n• Learn the definition and main idea.\n• Note the important formula, relationship or example.\n• Practise one or two questions on the topic.`, resources:[]};
+      }
+      return {text:"I can turn a topic into concise revision notes when it matches my built-in study topics. Try a specific topic such as 'make notes on gravitation' or paste your own notes and I'll condense them.", resources:[]};
+    }
+
+    // Intent 3: direct doubt answering
+    const looksLikeSearch = /class\s?\d|under\s?\d+|below\s?\d+|\d+\s?points?|cheapest|cheap notes|best rated|top rated|highest rat|compare|find|search|notes?\b/.test(q);
+    const looksLikeQuestion = /^(what|why|how|explain|define|when|who|where|which|tell me|is|are|can|does|do|difference between)\b/.test(q) || q.endsWith("?");
     if(looksLikeQuestion && !looksLikeSearch){
       const explanation = AIService.explainDoubt(q);
-      if(explanation) return {text:`${explanation}\n\nWant me to also find notes on this topic, or generate a quick quiz to test yourself?`, resources:[]};
-      return {text:"I don't have a ready explanation for that specific one — try posting it on the Doubts board so another student can help, or ask me about a named topic (e.g. \"explain trigonometry\" or \"what is Newton's second law\").", resources:[]};
+      if(explanation) return {text:`${explanation}\n\nIf you want, ask me to make revision notes on this topic or find related notes on VidyaLoop.`, resources:[]};
+      return {text:"I couldn't confidently answer that from my built-in study knowledge. Try rephrasing the doubt with the exact topic/chapter, or post it on the Doubts board so another student can help.", resources:[]};
     }
 
-    // Intent 3: fall back to marketplace resource recommendations
-    let pool = RESOURCES.slice();
+    // Intent 4: find/search resources
+    let pool = RESOURCES.filter(r=>r.status==="approved");
     let note = "";
     const subjMatch = SUBJECTS.find(s=>q.includes(s.toLowerCase()));
     if(subjMatch){ pool = pool.filter(r=>r.subject===subjMatch); note+=` in ${subjMatch}`; }
@@ -670,18 +680,20 @@ const AIService = {
     if(clsMatch){ const c=Number(clsMatch[1]); pool=pool.filter(r=>r.class===c); note+=` for Class ${c}`; }
     const underMatch = q.match(/under\s?(\d+)|below\s?(\d+)|(\d+)\s?points?/);
     if(underMatch){ const n=Number(underMatch[1]||underMatch[2]||underMatch[3]); if(n){ pool=pool.filter(r=>r.price<=n); note+=` under ${n} points`; } }
-    if(q.includes("highest rat") || q.includes("best rated") || q.includes("top rated")){
-      pool = pool.sort((a,b)=>b.rating-a.rating);
-    } else if(q.includes("cheap")){
-      pool = pool.sort((a,b)=>a.price-b.price);
-    } else {
-      pool = pool.sort((a,b)=>b.aiScore-a.aiScore);
+    const topicWords = ["chapter","topic","revision","notes","study guide","worksheet","practice"].filter(w=>q.includes(w));
+    if(topicWords.length){
+      const terms=q.replace(/[^a-z0-9 ]/g," ").split(/\s+/).filter(w=>w.length>3 && !["find","best","notes","note","under","below","class","give","show","me","for","with","from","search","study","guide"].includes(w));
+      const topicPool=pool.filter(r=>terms.some(t=>(r.title+" "+r.chapter+" "+r.description).toLowerCase().includes(t)));
+      if(topicPool.length) pool=topicPool;
     }
-    pool = pool.slice(0,3);
-    if(!pool.length) return {text:`I couldn't find resources matching that${note}. Try broadening the class, subject or budget — or if nothing's been uploaded for this topic yet, be the first to upload one!`, resources:[]};
-    const top = pool[0];
-    let text = `Here's what I'd recommend${note || " overall"}:\n\nTop pick: ${top.title}\nAI score: ${top.aiScore}/100 · Rating: ${top.rating}/5 · Price: ${top.price} pts\nWhy: ${top.pros[0]?.toLowerCase()||"solid coverage"}${top.pros[1]?", "+top.pros[1].toLowerCase():""}.\nWorth noting: ${top.cons[0]?.toLowerCase()||"no major drawbacks flagged"}.`;
-    if(pool.length>1) text += `\n\nI also found ${pool.length-1} more option${pool.length>2?"s":""} below — ask me to compare them if you'd like.`;
+    if(q.includes("highest rat") || q.includes("best rated") || q.includes("top rated")) pool=pool.sort((a,b)=>b.rating-a.rating);
+    else if(q.includes("cheap") || q.includes("lowest")) pool=pool.sort((a,b)=>a.price-b.price);
+    else pool=pool.sort((a,b)=>b.aiScore-a.aiScore);
+    pool=pool.slice(0,3);
+    if(!pool.length) return {text:`I couldn't find resources matching that${note}. Try a broader subject, class or budget, or upload the first resource for that topic.`, resources:[]};
+    const top=pool[0];
+    let text=`Here's what I found${note || ""}:\n\nTop pick: ${top.title}\nAI score: ${top.aiScore}/100 · Rating: ${top.rating}/5 · Price: ${top.price} pts\nTopic: ${top.chapter}\nWhy: ${top.pros[0]?.toLowerCase()||"good topic coverage"}.`;
+    if(pool.length>1) text+=`\n\nI also found ${pool.length-1} more option${pool.length>2?"s":""}. Ask me to compare them.`;
     return {text, resources:pool};
   },
   generateQuiz(resource, count){
@@ -1058,25 +1070,36 @@ async function purchase(resId){
   const r = RESOURCES.find(x=>x.id===resId);
   const u = state.user;
   if(!u) return nav("login");
-  if(r.creatorId===u.id) return toast("You can't purchase your own resource.");
+  if(!r) return toast("Resource not found.");
+  if(r.creatorId===u.id || r.creatorId===u._authUserId) return toast("You can't purchase your own resource.");
   if(u.purchased.includes(resId)) return toast("Already in your library.");
   if(u.points < r.price) return toast("Not enough Reward Points.");
+
   if(usingRealBackend){
-    const { data: already } = await sb.from("resource_purchases").select("id").eq("resource_id",resId).eq("user_id",u._authUserId).maybeSingle();
-    if(already) return toast("Already in your library.");
-    const { data, error } = await sb.rpc("spend_reward_points", { target_user_id:u._authUserId, point_amount:r.price, point_reason:"Purchased: "+r.title });
-    if(error || data!==true){ toast("Purchase failed — points could not be deducted."); return; }
-    const { error: purchaseErr } = await sb.from("resource_purchases").insert({ resource_id:resId, user_id:u._authUserId });
-    if(purchaseErr){ console.error("resource_purchases insert failed:", purchaseErr); }
-    await sb.from("resources").update({ purchases: (r.purchases||0)+1 }).eq("id", resId);
-    u.points -= r.price;
-  } else {
-    u.points -= r.price;
-    addTx("Purchased: "+r.title, -r.price);
+    const { data, error } = await sb.rpc("purchase_resource", { p_resource_id: resId });
+    if(error){
+      console.error("purchase_resource failed:", error);
+      return toast(error.message || "Purchase failed. Nothing was deducted.");
+    }
+    if(!data?.success) return toast(data?.message || "Purchase failed. Nothing was deducted.");
+
+    // The database transaction is authoritative. Refresh balance and purchases.
+    const { data: rp } = await sb.from("reward_points").select("balance").eq("user_id",u._authUserId).maybeSingle();
+    if(rp && typeof rp.balance === "number") u.points = rp.balance;
+    else u.points = Math.max(0, u.points - r.price);
+    if(!u.purchased.includes(resId)) u.purchased.push(resId);
+    r.purchases = (r.purchases||0) + 1;
+    await loadPointTransactions();
+    toast("Purchase complete — added to your library.");
+    render();
+    return;
   }
+
+  // Offline fallback
+  u.points -= r.price;
+  addTx("Purchased: "+r.title, -r.price);
   u.purchased.push(resId);
-  r.purchases += 1;
-  if(usingRealBackend) loadPointTransactions();
+  r.purchases = (r.purchases||0) + 1;
   notify("Purchase complete", r.title+" added to your library.");
   render();
 }
@@ -1227,34 +1250,22 @@ async function redeemPromoCode(){
   if(!code) return toast("Enter a promo code.");
 
   const { data, error } = await sb.rpc("redeem_promo_code", { p_code: code });
-
   if(error){
-    console.error("redeem_promo_code failed:", error);
-    const msg = error.message || "Promo code could not be redeemed.";
-    return toast(msg);
+    console.error("Promo redemption failed:", error);
+    return toast(error.message || "Promo code could not be redeemed.");
   }
 
-  const points = Number(data?.points_awarded || 0);
-  if(points <= 0) return toast("Promo code redeemed, but no Reward Points were awarded.");
+  const result = Array.isArray(data) ? data[0] : data;
+  const points = Number(result?.points_awarded ?? result?.rp_bonus ?? 0);
+  if(!result?.success){
+    return toast(result?.message || "Promo code could not be redeemed.");
+  }
 
   if(input) input.value = "";
 
-  // Reload the authoritative balance/transactions from Supabase immediately.
-  try{
-    const { data: rp, error: rpErr } = await sb.from("reward_points")
-      .select("balance")
-      .eq("user_id", state.user._authUserId)
-      .maybeSingle();
-
-    if(!rpErr && rp && typeof rp.balance === "number"){
-      state.user.points = rp.balance;
-    } else {
-      state.user.points += points;
-    }
-  }catch(e){
-    state.user.points += points;
-  }
-
+  // Refresh from Supabase instead of incrementing a local value.
+  const fresh = await fetchAccountData(state.user._authUserId);
+  if(fresh.points !== undefined) state.user.points = fresh.points;
   await loadPointTransactions();
   toast("Promo redeemed! +"+points+" Reward Points.");
   render();
@@ -1990,7 +2001,7 @@ function viewDashboard(){
   const recentDoubts = DOUBTS.slice(0,4);
   const quick = [
     ["🔍","Find Notes","marketplace"],["⬆️","Upload Notes","seller"],["❓","Ask a Doubt","askDoubt"],
-    ["🤝","Answer Doubts","doubts"],["⏱️","Focus Mode","focus"],["📝","Take a Quiz","marketplace"]
+    ["🤝","Answer Doubts","doubts"],["⏱️","Focus Mode","focus"],["📝","Take a Quiz","quizLibrary"]
   ];
   return `${navBar()}<div class="pagewrap"><div class="wrap">
     <div class="section-title"><div><h2>Welcome back, ${u.name.split(" ")[0]} 👋</h2><p class="muted small">Class ${u.class} · ${u.board} · ${u.streak}-day streak 🔥</p></div></div>
@@ -2696,6 +2707,20 @@ function saveBio(){
 }
 window.saveBio = saveBio;
 
+function viewQuizLibrary(){
+  const u = state.user;
+  const owned = RESOURCES.filter(r=>r.status==="approved" && u?.purchased.includes(r.id));
+  const available = RESOURCES.filter(r=>r.status==="approved");
+  return `${navBar()}<div class="pagewrap"><div class="wrap" style="max-width:900px;">
+    <div class="section-title"><div><h2>Take a Quiz</h2><p class="muted small">Choose a resource and generate a quiz from its subject and topic.</p></div></div>
+    ${owned.length ? `<div class="section-title"><h3 style="font-size:15px;">Your purchased resources</h3></div><div class="grid cols-3">${owned.map(r=>`<div class="card card-hover">
+      <div class="meta" style="margin-bottom:8px;"><span class="tag tag-violet">${r.subject}</span><span class="tag tag-muted">Class ${r.class}</span></div>
+      <h4 style="margin-bottom:6px;">${r.title}</h4><p class="small muted" style="margin-bottom:12px;">${r.chapter} · ${r.pages} pages</p>
+      <button class="btn btn-primary btn-block btn-sm" onclick="nav('quizSetup',{id:'${r.id}'})">Create quiz</button>
+    </div>`).join("")}</div>` : `<div class="card empty"><div class="ic">📝</div>You don't have any purchased resources yet.<br><span class="small">Purchase a resource first, then come back here to quiz yourself.</span><br><button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="nav('marketplace')">Browse marketplace</button></div>`}
+  </div></div>${footer()}`;
+}
+
 function viewQuizSetup(id){
   const r = RESOURCES.find(x=>x.id===id);
   return `${navBar()}<div class="pagewrap"><div class="wrap" style="max-width:560px;">
@@ -2785,6 +2810,7 @@ function render(){
     case "sellerResult": html = viewSellerResult(state.params.id); break;
     case "admin": html = viewAdmin(); break;
     case "profile": html = viewProfile(); break;
+    case "quizLibrary": html = viewQuizLibrary(); break;
     case "quizSetup": html = viewQuizSetup(state.params.id); break;
     case "quizTake": html = viewQuizTake(); break;
     case "quizResult": html = viewQuizResult(); break;
