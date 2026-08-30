@@ -383,59 +383,52 @@ async function uploadFileToStorage(resId, file){
   return data.publicUrl;
 }
 async function getResourceFileUrl(r){
-  if(!usingRealBackend || !r?.hasFile || !r?.fileName || !r?.id) return r?.fileUrl || null;
+  if(!r?.id) return null;
+  let fileName=r.fileName||null;
+  let fileType=r.fileType||null;
+  let fileUrl=r.fileUrl||null;
 
-  // Prefer a short-lived signed URL. This works when the resources bucket is
-  // private and does not expose paid notes publicly.
-  const path = r.id + "/" + r.fileName;
-  try{
-    const { data, error } = await sb.storage.from("resources").createSignedUrl(path, 3600);
-    if(!error && data?.signedUrl) return data.signedUrl;
-  }catch(e){
-    console.warn("Signed resource URL failed:", e);
+  if(usingRealBackend){
+    // Refresh the DB row because older client caches may have has_file/file_name=false/null.
+    try{
+      const {data,rowError}=await sb.from("resources").select("id,has_file,file_name,file_type,file_url").eq("id",r.id).maybeSingle();
+      if(data){ fileName=data.file_name||fileName; fileType=data.file_type||fileType; fileUrl=data.file_url||fileUrl; r.hasFile=!!data.has_file; r.fileName=fileName; r.fileType=fileType; r.fileUrl=fileUrl; }
+    }catch(e){ console.warn("Resource metadata refresh failed:",e); }
+
+    // If the filename column is missing, discover the first object inside this resource's folder.
+    if(!fileName){
+      try{
+        const {data,error}=await sb.storage.from("resources").list(r.id,{limit:100,sortBy:{column:"name",order:"asc"}});
+        if(!error && data?.length){
+          const file=data.find(x=>x.name && !x.id?.endsWith("/")) || data.find(x=>x.name);
+          if(file) fileName=file.name;
+        }
+      }catch(e){ console.warn("Resource storage listing failed:",e); }
+    }
+
+    if(fileName){
+      const path=r.id+"/"+fileName;
+      try{
+        const {data,error}=await sb.storage.from("resources").createSignedUrl(path,3600);
+        if(!error && data?.signedUrl) return data.signedUrl;
+        console.warn("Signed URL failed:",error);
+      }catch(e){ console.warn("Signed URL exception:",e); }
+      try{
+        const {data}=sb.storage.from("resources").getPublicUrl(path);
+        if(data?.publicUrl) return data.publicUrl;
+      }catch(e){}
+    }
   }
-
-  // Fall back to the stored public URL for installations where the bucket is public.
-  return r.fileUrl || null;
+  return fileUrl||null;
 }
 
 async function openResourceFile(id){
-  let r = RESOURCES.find(x=>x.id===id);
+  const r = RESOURCES.find(x=>x.id===id);
   if(!r) return toast("Resource not found.");
-  const u = state.user;
-  if(!u || !(u.purchased.includes(id) || u._authUserId===r.creatorId)) return toast("Purchase this resource to open it.");
-
-  // Refresh file metadata before opening.
-  try{
-    const {data: dbRow} = await sb.from("resources")
-      .select("id,creator_id,has_file,file_name,file_type,file_url")
-      .eq("id",id).maybeSingle();
-    if(dbRow){
-      r.hasFile=!!dbRow.has_file;
-      r.fileName=dbRow.file_name||r.fileName||"";
-      r.fileType=dbRow.file_type||r.fileType||"";
-      r.fileUrl=dbRow.file_url||r.fileUrl||"";
-      r.creatorId=dbRow.creator_id||r.creatorId;
-    }
-  }catch(e){}
-
-  let url = null;
-  if(r.fileName) url = await getResourceFileUrl({...r,hasFile:true});
-
-  if(!url){
-    try{
-      const {data: objects} = await sb.storage.from("resources").list(id,{limit:100});
-      const candidate = (objects||[]).find(o=>o.name && !o.name.endsWith("/"));
-      if(candidate){
-        const path=id+"/"+candidate.name;
-        const signed=await sb.storage.from("resources").createSignedUrl(path,3600);
-        url = signed?.data?.signedUrl || sb.storage.from("resources").getPublicUrl(path)?.data?.publicUrl || null;
-      }
-    }catch(e){}
-  }
-
-  if(!url) return toast("The purchased file could not be found in Supabase Storage.");
-  window.open(url,"_blank","noopener");
+  if(!r.fileName && !r.fileUrl) return toast("The uploaded file could not be located in Storage.");
+  const url = await getResourceFileUrl(r);
+  if(!url) return toast("Couldn't open the uploaded notes.");
+  window.open(url, "_blank", "noopener");
 }
 window.openResourceFile = openResourceFile;
 
@@ -471,8 +464,91 @@ function slugEmail(name){ return name.trim().toLowerCase().replace(/[^a-z0-9]+/g
 
 function userKey(name){ return "user:"+normalizeUsername(name); }
 
+function focusStorageKey(){
+  const id = state.user?._authUserId || state.user?.username || state.user?.id;
+  return id ? "vidyaloop:focus:v2:"+id : "vidyaloop:focus:v2:guest";
+}
+function focusKvKey(){
+  const id = state.user?._authUserId || state.user?.username || state.user?.id;
+  return id ? "focus:"+id : null;
+}
+function focusSnapshot(){
+  return {
+    log: Array.isArray(state.focus.log) ? state.focus.log : [],
+    active: !!state.focus.active,
+    paused: !!state.focus.paused,
+    startedAt: state.focus.startedAt || null,
+    elapsed: Number(state.focus.elapsed)||0,
+    subject: state.focus.subject || "",
+    savedAt: Date.now()
+  };
+}
+function saveFocusLocal(){
+  try{
+    const snap=focusSnapshot();
+    localStorage.setItem(focusStorageKey(), JSON.stringify(snap));
+    // A second key keyed by username helps if an auth/session identifier changes.
+    if(state.user?.username) localStorage.setItem("vidyaloop:focus:v2:user:"+normalizeUsername(state.user.username), JSON.stringify(snap));
+  }catch(e){ console.warn("Focus local save failed:", e); }
+}
+async function saveFocusPersistent(){
+  saveFocusLocal();
+  const key=focusKvKey();
+  if(usingRealBackend && key){
+    try{ await Store.set(key, JSON.stringify(focusSnapshot()), true); }
+    catch(e){ console.warn("Focus KV save failed:",e); }
+  }
+}
+function readLocalFocus(){
+  const keys=[focusStorageKey()];
+  if(state.user?.username) keys.push("vidyaloop:focus:v2:user:"+normalizeUsername(state.user.username));
+  for(const k of keys){
+    try{ const raw=localStorage.getItem(k); if(raw) return JSON.parse(raw); }catch(e){}
+  }
+  return null;
+}
+async function restoreFocusPersistence(){
+  let saved=readLocalFocus();
+  const key=focusKvKey();
+  if(usingRealBackend && key){
+    try{
+      const raw=await Store.get(key);
+      if(raw){ const kv=JSON.parse(raw); if(!saved || (kv.savedAt||0)>(saved.savedAt||0)) saved=kv; }
+    }catch(e){ console.warn("Focus KV restore failed:",e); }
+  }
+  if(!saved) return;
+  if(Array.isArray(saved.log)) state.focus.log=saved.log;
+  if(saved.active){
+    state.focus.active=true;
+    state.focus.paused=!!saved.paused;
+    state.focus.subject=saved.subject||"General";
+    state.focus.elapsed=Number(saved.elapsed)||0;
+    if(!state.focus.paused && saved.startedAt){
+      state.focus.startedAt=Number(saved.startedAt);
+      state.focus.elapsed=Math.max(state.focus.elapsed,Date.now()-state.focus.startedAt);
+    }else state.focus.startedAt=saved.startedAt||Date.now();
+    startFocusInterval();
+  }else{
+    state.focus.active=false;
+    state.focus.paused=false;
+    state.focus.startedAt=null;
+    state.focus.elapsed=0;
+  }
+}
+function startFocusInterval(){
+  clearInterval(state.focus.timer);
+  state.focus.timer=setInterval(()=>{
+    if(state.focus.active && !state.focus.paused){
+      state.focus.elapsed=Math.max(0,Date.now()-state.focus.startedAt);
+      saveFocusLocal();
+      renderFocusTimerOnly();
+    }
+  },1000);
+}
+
 async function persistUser(){
   if(!state.user) return;
+  saveFocusLocal();
   const u = state.user;
   const record = {
     name:u.name, fullName:u.fullName || u.name, username:u.username || u.name, class:u.class, board:u.board, bio:u.bio,
@@ -487,11 +563,7 @@ async function persistUser(){
     firstLogin: u._firstLogin || Date.now(), lastLogin: Date.now(),
     loginCount: u._loginCount || 1, status: "active", owner: u.isOwner
   };
-  const recordJson = JSON.stringify(record);
-  // Keep a browser-side copy as a reliable same-device fallback. Cloud KV is
-  // still the primary store when Supabase is connected.
-  try{ localStorage.setItem("vidyaloop_user_"+(u.username || u.name).trim().toLowerCase(), recordJson); }catch(e){}
-  await Store.set(userKey(u.username || u.name), recordJson, true);
+  await Store.set(userKey(u.username || u.name), JSON.stringify(record), true);
   if(usingRealBackend && u._authUserId){
     await sb.from("profiles").update({ bio:u.bio, reputation:u.reputation, class:u.class, board:u.board, streak:u.streak }).eq("id", u._authUserId);
   }
@@ -890,6 +962,7 @@ async function establishSession(name, cls, board, saved, isOwner, loginMeta, acc
   };
   state.transactions = saved?.transactions || [{id:uid("tx"), reason:"Welcome bonus", amount:50, ts:Date.now(), balance:50}];
   state.focus.log = saved?.focusLog || [];
+  await restoreFocusPersistence();
   state.subscription = null; // no subscriptions table in this schema — Premium/promo UI stays but is inert
   state.notifications = [{id:uid("n"), title: saved? "Welcome back 👋" : "Welcome to VidyaLoop 👋", desc: saved? "Your stats and progress are right where you left them." : "Start by exploring the marketplace or asking a doubt.", ts:Date.now(), read:false}];
   nav(state.user.accountType==="store_owner" ? "storeDashboard" : "dashboard");
@@ -998,6 +1071,8 @@ async function loadPurchasedResources(){
   await persistUser();
   if(state.route === "library") render();
 }
+window.loadPurchasedResources = loadPurchasedResources;
+
 window.loadPurchasedResources = loadPurchasedResources;
 
 function mapDbResource(r){
@@ -1653,46 +1728,69 @@ window.chipQuery = chipQuery;
 
 /* Focus mode */
 function startFocus(subject){
-  state.focus.active = true; state.focus.paused=false; state.focus.startedAt = Date.now(); state.focus.elapsed = 0; state.focus.subject = subject||"General";
-  clearInterval(state.focus.timer);
-  state.focus.timer = setInterval(()=>{ state.focus.elapsed = Date.now()-state.focus.startedAt; renderFocusTimerOnly(); }, 1000);
+  state.focus.active=true;
+  state.focus.paused=false;
+  state.focus.startedAt=Date.now();
+  state.focus.elapsed=0;
+  state.focus.subject=subject||"General";
+  saveFocusPersistent();
+  startFocusInterval();
   render();
 }
-window.startFocus = startFocus;
-function pauseFocus(){
+window.startFocus=startFocus;
+async function pauseFocus(){
   if(!state.focus.active || state.focus.paused) return;
+  state.focus.elapsed=Math.max(0,Date.now()-state.focus.startedAt);
   clearInterval(state.focus.timer);
-  state.focus.paused = true;
+  state.focus.paused=true;
+  await saveFocusPersistent();
   render();
 }
-window.pauseFocus = pauseFocus;
-function resumeFocus(){
+window.pauseFocus=pauseFocus;
+async function resumeFocus(){
   if(!state.focus.active || !state.focus.paused) return;
-  state.focus.paused = false;
-  state.focus.startedAt = Date.now() - state.focus.elapsed;
-  state.focus.timer = setInterval(()=>{ state.focus.elapsed = Date.now()-state.focus.startedAt; renderFocusTimerOnly(); }, 1000);
+  state.focus.paused=false;
+  state.focus.startedAt=Date.now()-(state.focus.elapsed||0);
+  startFocusInterval();
+  await saveFocusPersistent();
   render();
 }
-window.resumeFocus = resumeFocus;
+window.resumeFocus=resumeFocus;
 async function endFocus(){
+  if(!state.focus.active) return;
+  state.focus.elapsed=state.focus.paused ? Math.max(0,state.focus.elapsed||0) : Math.max(0,Date.now()-state.focus.startedAt);
   clearInterval(state.focus.timer);
-  const mins = Math.round(state.focus.elapsed/60000);
-  if(mins>0){
-    state.focus.log.push({date:new Date().toDateString(), minutes:mins, subject:state.focus.subject});
-    // Wait for the KV write to finish. This prevents a quick reload from
-    // racing the save and losing the just-completed focus session.
-    await persistUser();
-    notify("Focus session logged", mins+" minutes of "+state.focus.subject+" recorded.");
+  const seconds=Math.floor(state.focus.elapsed/1000);
+  if(seconds>0){
+    state.focus.log.push({date:new Date().toDateString(),minutes:Math.max(1,Math.round(seconds/60)),seconds,subject:state.focus.subject});
   }
-  state.focus.active=false; state.focus.paused=false; state.focus.elapsed=0;
+  const subject=state.focus.subject;
+  state.focus.active=false; state.focus.paused=false; state.focus.startedAt=null; state.focus.elapsed=0;
+  await saveFocusPersistent();
+  await persistUser();
+  if(seconds>0) notify("Focus session logged",Math.max(1,Math.round(seconds/60))+" minutes of "+subject+" recorded.");
   render();
 }
-window.endFocus = endFocus;
+window.endFocus=endFocus;
+
 function resetFocusSession(reasonMsg){
   clearInterval(state.focus.timer);
-  state.focus.active=false; state.focus.paused=false; state.focus.elapsed=0;
+  state.focus.active=false;
+  state.focus.paused=false;
+  state.focus.startedAt=null;
+  state.focus.elapsed=0;
+  saveFocusLocal();
   if(reasonMsg) notify("Focus session reset", reasonMsg);
 }
+
+document.addEventListener("visibilitychange", ()=>{
+  if(document.visibilityState === "visible" && state.focus.active && !state.focus.paused){
+    state.focus.elapsed = Math.max(0, Date.now()-state.focus.startedAt);
+    renderFocusTimerOnly();
+  }
+  if(state.focus.active) saveFocusPersistent();
+});
+window.addEventListener("pagehide", ()=>{ if(state.focus.active) saveFocusPersistent(); });
 
 /* ---------------- FACECAM RECORDING ----------------
    Everything here stays 100% local to the student's own browser.
@@ -2223,7 +2321,7 @@ function viewResource(id){
         ${(owned || isOwn) ? `
         <div class="section-title" style="margin-top:24px;"><h3 style="font-size:16px;">Your uploaded notes</h3></div>
         <div class="card" id="resourceFile_${r.id}">
-          <div class="small muted" style="margin-bottom:10px;">Checking the uploaded file…</div>
+          <div class="small muted" style="margin-bottom:10px;">Loading your uploaded notes…</div>
           <button class="btn btn-primary btn-sm" type="button" onclick="openResourceFile('${r.id}')">Open notes</button>
         </div>
         ` : `
@@ -2372,12 +2470,12 @@ function renderChatLog(){
 function viewFocus(){
   const f = state.focus;
   const pct = f.active? Math.min(100,(f.elapsed/(45*60000))*100) : 0;
-  const today = f.log.filter(l=>l.date===new Date().toDateString()).reduce((a,b)=>a+b.minutes,0);
-  const week = f.log.slice(-7).reduce((a,b)=>a+b.minutes,0);
-  const month = f.log.reduce((a,b)=>a+b.minutes,0);
-  const maxM = Math.max(...f.log.slice(-7).map(l=>l.minutes),1);
+  const today = Math.round(f.log.filter(l=>l.date===new Date().toDateString()).reduce((a,b)=>a+(b.seconds!=null?b.seconds:b.minutes*60),0)/60);
+  const week = Math.round(f.log.slice(-7).reduce((a,b)=>a+(b.seconds!=null?b.seconds:b.minutes*60),0)/60);
+  const month = Math.round(f.log.reduce((a,b)=>a+(b.seconds!=null?b.seconds:b.minutes*60),0)/60);
+  const maxM = Math.max(...f.log.slice(-7).map(l=>l.seconds!=null?l.seconds/60:l.minutes),1);
   const bySubject = {};
-  f.log.forEach(l=>{ bySubject[l.subject]=(bySubject[l.subject]||0)+l.minutes; });
+  f.log.forEach(l=>{ bySubject[l.subject]=(bySubject[l.subject]||0)+(l.seconds!=null?l.seconds/60:l.minutes); });
   const subjectEntries = Object.entries(bySubject).sort((a,b)=>b[1]-a[1]);
   const maxSubjM = Math.max(...subjectEntries.map(e=>e[1]),1);
   return `${navBar()}<div class="pagewrap"><div class="wrap">
@@ -2406,7 +2504,7 @@ function viewFocus(){
           <h3 style="font-size:14px; margin-bottom:14px;">Recent sessions</h3>
           ${f.log.length? `<div style="display:flex; align-items:flex-end; gap:8px; height:120px;">
             ${f.log.slice(-7).map(l=>`<div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:6px; justify-content:flex-end; height:100%;">
-              <div style="width:100%; border-radius:6px 6px 0 0; background:linear-gradient(180deg,var(--violet),var(--cyan)); height:${Math.max(4,(l.minutes/maxM)*90)}px;"></div>
+              <div style="width:100%; border-radius:6px 6px 0 0; background:linear-gradient(180deg,var(--violet),var(--cyan)); height:${Math.max(4,((l.seconds!=null?l.seconds/60:l.minutes)/maxM)*90)}px;"></div>
               <div class="small muted" style="font-size:10px;">${l.date.slice(0,6)}</div>
             </div>`).join("")}
           </div>` : `<div class="empty" style="padding:30px 0;"><div class="ic">⏱️</div>No focus sessions logged yet. Start one to see your chart fill up.</div>`}
@@ -2916,87 +3014,23 @@ function viewSearch(){
 
 /* ---------------- MAIN RENDER ---------------- */
 async function hydrateResourceFile(id){
-  if(!usingRealBackend || !state.user) return;
-  const owned = state.user.purchased.includes(id) || state.user._authUserId;
+  const r = RESOURCES.find(x=>x.id===id);
+  if(!r || !state.user) return;
+  const owned = state.user.purchased.includes(id) || r.creatorId === state.user._authUserId;
   if(!owned) return;
-
   const box = document.getElementById("resourceFile_"+id);
   if(!box) return;
-
-  let r = RESOURCES.find(x=>x.id===id);
-  if(!r) return;
-
-  // Refresh the file metadata from the authoritative resource row.
-  try{
-    const {data: dbRow, error} = await sb.from("resources")
-      .select("id,creator_id,has_file,file_name,file_type,file_url,status")
-      .eq("id",id).maybeSingle();
-
-    if(!error && dbRow){
-      r.hasFile = !!dbRow.has_file;
-      r.fileName = dbRow.file_name || r.fileName || "";
-      r.fileType = dbRow.file_type || r.fileType || "";
-      r.fileUrl = dbRow.file_url || r.fileUrl || "";
-      r.creatorId = dbRow.creator_id || r.creatorId;
-    }
-  }catch(e){
-    console.warn("Could not refresh resource file metadata:",e);
-  }
-
-  const isOwner = state.user._authUserId === r.creatorId;
-  const hasAccess = state.user.purchased.includes(id) || isOwner;
-  if(!hasAccess){
-    box.innerHTML = '<div class="small muted">Purchase this resource to open the uploaded notes.</div>';
+  const url = await getResourceFileUrl(r);
+  if(!url){
+    box.innerHTML = '<div class="small muted">Could not open the uploaded notes. The file storage permissions need attention.</div>';
     return;
   }
-
-  let fileName = r.fileName || "";
-  let fileType = r.fileType || "";
-  let url = null;
-
-  // First try the recorded filename/path.
-  if(fileName){
-    url = await getResourceFileUrl({...r, hasFile:true});
-  }
-
-  // If metadata is incomplete, look inside the resource's storage folder.
-  if(!url){
-    try{
-      const {data: objects, error:listErr} = await sb.storage.from("resources").list(id,{limit:100});
-      if(!listErr && objects?.length){
-        const candidate = objects.find(o => o.name && !o.name.endsWith("/"));
-        if(candidate){
-          fileName = candidate.name;
-          const path = id+"/"+candidate.name;
-          const signed = await sb.storage.from("resources").createSignedUrl(path,3600);
-          if(!signed.error && signed.data?.signedUrl){
-            url = signed.data.signedUrl;
-            fileType = fileType || (/\.(png|jpe?g|gif|webp)$/i.test(candidate.name) ? "image/*" : "application/pdf");
-          }else{
-            const pub = sb.storage.from("resources").getPublicUrl(path);
-            url = pub?.data?.publicUrl || null;
-          }
-        }
-      }
-    }catch(e){
-      console.warn("Storage file discovery failed:",e);
-    }
-  }
-
-  if(!url){
-    box.innerHTML = `<div class="small muted">The purchase is valid, but the uploaded file could not be located in Supabase Storage. Check that the file exists in the resources bucket under folder ${id}.</div>`;
-    return;
-  }
-
-  const safeUrl = String(url).replace(/"/g,'&quot;');
-  const lowerType = String(fileType||"").toLowerCase();
-  const isImage = lowerType.startsWith("image/") || /\.(png|jpe?g|gif|webp)(\?|$)/i.test(fileName);
-
-  box.innerHTML = isImage
-    ? `<img src="${safeUrl}" alt="Uploaded notes" style="max-width:100%; max-height:900px; object-fit:contain; border-radius:10px; display:block; margin:auto;" onerror="this.parentElement.innerHTML='<div class=&quot;small muted&quot;>The image could not be displayed. The storage URL or bucket access needs attention.</div>'">`
-      + `<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-primary btn-sm" type="button" onclick="openResourceFile('${id}')">Open full size</button></div>`
-    : `<iframe src="${safeUrl}" title="Uploaded notes" style="width:100%;height:700px;border:0;border-radius:8px;background:#fff;"></iframe>`
-      + `<div style="margin-top:10px;"><button class="btn btn-primary btn-sm" type="button" onclick="openResourceFile('${id}')">Open / download file</button></div>`;
+  const safeUrl = url.replace(/"/g,'&quot;');
+  box.innerHTML = (r.fileType||"").startsWith("image/")
+    ? `<img src="${safeUrl}" alt="Uploaded notes" style="max-width:100%; max-height:800px; object-fit:contain; border-radius:10px; display:block; margin:auto;">`
+      + `<div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;"><button class="btn btn-outline btn-sm" type="button" onclick="openResourceFile('${id}')">Open full size</button></div>`
+    : `<iframe src="${safeUrl}" title="Uploaded notes" style="width:100%; height:650px; border:0; border-radius:8px; background:#fff;"></iframe>`
+      + `<div style="margin-top:10px;"><button class="btn btn-outline btn-sm" type="button" onclick="openResourceFile('${id}')">Open / download PDF</button></div>`;
 }
 window.hydrateResourceFile = hydrateResourceFile;
 
@@ -3066,10 +3100,8 @@ async function restoreSupabaseSession(){
     let kvSaved = null;
     if(authUsername){
       const rawSaved = await Store.get(userKey(authUsername));
-      const localSaved = (()=>{ try{ return localStorage.getItem("vidyaloop_user_"+authUsername.trim().toLowerCase()); }catch(e){ return null; } })();
-      const raw = rawSaved || localSaved;
-      if(raw){
-        try{ kvSaved = JSON.parse(raw); }catch(e){ console.warn("Saved profile data parse failed:", e); }
+      if(rawSaved){
+        try{ kvSaved = JSON.parse(rawSaved); }catch(e){ console.warn("Saved profile data parse failed:", e); }
       }
     }
     const saved = {
