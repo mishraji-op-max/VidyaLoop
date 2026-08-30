@@ -832,6 +832,7 @@ function establishSession(name, cls, board, saved, isOwner, loginMeta, accountTy
   if(usingRealBackend){
     loadPointTransactions();
     loadResourcesFromDB();
+    loadPurchasedResources();
     loadDoubtsFromDB();
   }
 }
@@ -876,6 +877,42 @@ async function loadResourcesFromDB(){
   render();
 }
 window.loadResourcesFromDB = loadResourcesFromDB;
+
+/* Purchases are stored in resource_purchases, not in the profile.
+   Keep the local purchased list synchronized with the database so
+   purchased resources survive reloads and appear in My Library. */
+async function loadPurchasedResources(){
+  if(!usingRealBackend || !state.user?._authUserId) return;
+  const uidNow = state.user._authUserId;
+  const { data: purchases, error } = await sb.from("resource_purchases")
+    .select("resource_id")
+    .eq("user_id", uidNow);
+  if(error){
+    console.error("loadPurchasedResources failed:", error);
+    return;
+  }
+
+  const ids = [...new Set((purchases||[]).map(x=>x.resource_id).filter(Boolean))];
+  state.user.purchased = ids;
+  persistUser();
+
+  if(ids.length){
+    const { data: purchasedRows, error: resErr } = await sb.from("resources")
+      .select("*, profiles(name)")
+      .in("id", ids);
+    if(resErr){
+      console.error("loadPurchasedResources resources failed:", resErr);
+    } else {
+      const byId = {};
+      RESOURCES.forEach(r=>byId[r.id]=r);
+      (purchasedRows||[]).forEach(r=>byId[r.id]=mapDbResource(r));
+      RESOURCES.length = 0;
+      RESOURCES.push(...Object.values(byId));
+    }
+  }
+  render();
+}
+window.loadPurchasedResources = loadPurchasedResources;
 
 function mapDbResource(r){
   return {
