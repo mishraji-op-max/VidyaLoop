@@ -792,7 +792,13 @@ function nav(route, params={}){
     stopFacecam();
     toast("Facecam recording stopped — camera released.");
   }
-  state.route = route; state.params = params; window.scrollTo(0,0); render(); if(route==="library" && usingRealBackend) loadPurchasedResources();
+  state.route = route; state.params = params; window.scrollTo(0,0);
+  if(route==="library" && usingRealBackend){
+    render();
+    loadPurchasedResources();
+  } else {
+    render();
+  }
 }
 window.nav = nav;
 
@@ -834,11 +840,13 @@ function establishSession(name, cls, board, saved, isOwner, loginMeta, accountTy
     // Load resources first, then overlay the user's purchases. Running both
     // concurrently can cause a late resources refresh to wipe the purchased
     // resource cache used by My Library.
-    loadResourcesFromDB().then(()=>loadPurchasedResources()).catch(err=>{
+    try{
+      await loadResourcesFromDB();
+      await loadPurchasedResources();
+    }catch(err){
       console.error("Initial resource/library load failed:", err);
-      loadPurchasedResources();
-    });
-    loadDoubtsFromDB();
+    }
+    await loadDoubtsFromDB();
   }
 }
 
@@ -890,7 +898,6 @@ async function loadPurchasedResources(){
   if(!usingRealBackend || !state.user?._authUserId) return;
   const uidNow = state.user._authUserId;
 
-  // Supabase is the source of truth for ownership.
   const { data: purchases, error: purchaseErr } = await sb
     .from("resource_purchases")
     .select("resource_id")
@@ -902,28 +909,24 @@ async function loadPurchasedResources(){
     return;
   }
 
-  const ids = [...new Set((purchases||[]).map(x=>x.resource_id).filter(Boolean))];
+  const ids = [...new Set((purchases || []).map(p => p.resource_id).filter(Boolean))];
   state.user.purchased = ids;
-  persistUser();
 
   if(ids.length){
-    // Deliberately use select("*") here instead of an embedded profiles join.
-    // The purchase itself does not depend on the profiles relationship.
-    const { data: purchasedRows, error: resErr } = await sb
+    const { data: rows, error: resourceErr } = await sb
       .from("resources")
       .select("*")
       .in("id", ids);
 
-    if(resErr){
-      console.error("loadPurchasedResources resources failed:", resErr);
-      toast("Couldn't load purchased notes: " + resErr.message);
+    if(resourceErr){
+      console.error("load purchased resources failed:", resourceErr);
+      toast("Couldn't load purchased notes: " + resourceErr.message);
       return;
     }
 
-    const byId = {};
-    RESOURCES.forEach(r=>byId[r.id]=r);
-    (purchasedRows||[]).forEach(r=>{
-      const mapped = mapDbResource(r);
+    const byId = Object.fromEntries(RESOURCES.map(r => [r.id, r]));
+    (rows || []).forEach(row => {
+      const mapped = mapDbResource(row);
       if(!mapped.creator) mapped.creator = "Student";
       byId[mapped.id] = mapped;
     });
@@ -931,8 +934,10 @@ async function loadPurchasedResources(){
     RESOURCES.push(...Object.values(byId));
   }
 
-  render();
+  await persistUser();
+  if(state.route === "library") render();
 }
+window.loadPurchasedResources = loadPurchasedResources;
 
 window.loadPurchasedResources = loadPurchasedResources;
 
@@ -1615,6 +1620,7 @@ function endFocus(){
   const mins = Math.round(state.focus.elapsed/60000);
   if(mins>0){
     state.focus.log.push({date:new Date().toDateString(), minutes:mins, subject:state.focus.subject});
+    persistUser();
     notify("Focus session logged", mins+" minutes of "+state.focus.subject+" recorded.");
   }
   state.focus.active=false; state.focus.paused=false; state.focus.elapsed=0;
@@ -2907,13 +2913,27 @@ async function restoreSupabaseSession(){
     if(!profile){ console.error("Session restore: profile not found"); return false; }
 
     const acct = await fetchAccountData(authUser.id);
+    const authUsername = authUser.user_metadata?.username || "";
+    let kvSaved = null;
+    if(authUsername){
+      const rawSaved = await Store.get(userKey(authUsername));
+      if(rawSaved){
+        try{ kvSaved = JSON.parse(rawSaved); }catch(e){ console.warn("Saved profile data parse failed:", e); }
+      }
+    }
     const saved = {
-      name: profile.name || authUser.user_metadata?.name || authUser.email?.split("@")[0] || "User",
-      fullName: profile.name || authUser.user_metadata?.full_name || authUser.user_metadata?.name || "User",
-      username: authUser.user_metadata?.username || "",
-      class: profile.class, board: profile.board, accountType: profile.account_type,
-      bio: profile.bio || "", reputation: acct.reputation, points: acct.points,
-      streak: acct.streak, is_admin: profile.is_admin === true
+      ...(kvSaved || {}),
+      name: profile.name || kvSaved?.name || authUser.user_metadata?.name || authUser.email?.split("@")[0] || "User",
+      fullName: profile.name || kvSaved?.fullName || authUser.user_metadata?.full_name || authUser.user_metadata?.name || "User",
+      username: authUsername || kvSaved?.username || "",
+      class: profile.class ?? kvSaved?.class,
+      board: profile.board ?? kvSaved?.board,
+      accountType: profile.account_type || kvSaved?.accountType,
+      bio: profile.bio ?? kvSaved?.bio ?? "",
+      reputation: acct.reputation ?? kvSaved?.reputation,
+      points: acct.points ?? kvSaved?.points,
+      streak: acct.streak ?? kvSaved?.streak,
+      is_admin: profile.is_admin === true
     };
     const name = saved.name;
     const username = saved.username || name;
