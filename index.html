@@ -400,12 +400,42 @@ async function getResourceFileUrl(r){
 }
 
 async function openResourceFile(id){
-  const r = RESOURCES.find(x=>x.id===id);
+  let r = RESOURCES.find(x=>x.id===id);
   if(!r) return toast("Resource not found.");
-  if(!r.hasFile || !r.fileName) return toast("This resource has no uploaded file.");
-  const url = await getResourceFileUrl(r);
-  if(!url) return toast("Couldn't open the uploaded notes.");
-  window.open(url, "_blank", "noopener");
+  const u = state.user;
+  if(!u || !(u.purchased.includes(id) || u._authUserId===r.creatorId)) return toast("Purchase this resource to open it.");
+
+  // Refresh file metadata before opening.
+  try{
+    const {data: dbRow} = await sb.from("resources")
+      .select("id,creator_id,has_file,file_name,file_type,file_url")
+      .eq("id",id).maybeSingle();
+    if(dbRow){
+      r.hasFile=!!dbRow.has_file;
+      r.fileName=dbRow.file_name||r.fileName||"";
+      r.fileType=dbRow.file_type||r.fileType||"";
+      r.fileUrl=dbRow.file_url||r.fileUrl||"";
+      r.creatorId=dbRow.creator_id||r.creatorId;
+    }
+  }catch(e){}
+
+  let url = null;
+  if(r.fileName) url = await getResourceFileUrl({...r,hasFile:true});
+
+  if(!url){
+    try{
+      const {data: objects} = await sb.storage.from("resources").list(id,{limit:100});
+      const candidate = (objects||[]).find(o=>o.name && !o.name.endsWith("/"));
+      if(candidate){
+        const path=id+"/"+candidate.name;
+        const signed=await sb.storage.from("resources").createSignedUrl(path,3600);
+        url = signed?.data?.signedUrl || sb.storage.from("resources").getPublicUrl(path)?.data?.publicUrl || null;
+      }
+    }catch(e){}
+  }
+
+  if(!url) return toast("The purchased file could not be found in Supabase Storage.");
+  window.open(url,"_blank","noopener");
 }
 window.openResourceFile = openResourceFile;
 
@@ -457,7 +487,11 @@ async function persistUser(){
     firstLogin: u._firstLogin || Date.now(), lastLogin: Date.now(),
     loginCount: u._loginCount || 1, status: "active", owner: u.isOwner
   };
-  await Store.set(userKey(u.username || u.name), JSON.stringify(record), true);
+  const recordJson = JSON.stringify(record);
+  // Keep a browser-side copy as a reliable same-device fallback. Cloud KV is
+  // still the primary store when Supabase is connected.
+  try{ localStorage.setItem("vidyaloop_user_"+(u.username || u.name).trim().toLowerCase(), recordJson); }catch(e){}
+  await Store.set(userKey(u.username || u.name), recordJson, true);
   if(usingRealBackend && u._authUserId){
     await sb.from("profiles").update({ bio:u.bio, reputation:u.reputation, class:u.class, board:u.board, streak:u.streak }).eq("id", u._authUserId);
   }
@@ -964,8 +998,6 @@ async function loadPurchasedResources(){
   await persistUser();
   if(state.route === "library") render();
 }
-window.loadPurchasedResources = loadPurchasedResources;
-
 window.loadPurchasedResources = loadPurchasedResources;
 
 function mapDbResource(r){
@@ -2188,10 +2220,10 @@ function viewResource(id){
         <hr class="div">
         <p style="font-size:14.5px; line-height:1.6;">${r.description}</p>
 
-        ${r.hasFile && (owned || isOwn) ? `
-        <div class="section-title" style="margin-top:24px;"><h3 style="font-size:16px;">Uploaded file</h3></div>
+        ${(owned || isOwn) ? `
+        <div class="section-title" style="margin-top:24px;"><h3 style="font-size:16px;">Your uploaded notes</h3></div>
         <div class="card" id="resourceFile_${r.id}">
-          <div class="small muted" style="margin-bottom:10px;">Loading your uploaded notes…</div>
+          <div class="small muted" style="margin-bottom:10px;">Checking the uploaded file…</div>
           <button class="btn btn-primary btn-sm" type="button" onclick="openResourceFile('${r.id}')">Open notes</button>
         </div>
         ` : `
@@ -2884,23 +2916,87 @@ function viewSearch(){
 
 /* ---------------- MAIN RENDER ---------------- */
 async function hydrateResourceFile(id){
-  const r = RESOURCES.find(x=>x.id===id);
-  if(!r || !r.hasFile || !state.user) return;
-  const owned = state.user.purchased.includes(id) || r.creatorId === state.user._authUserId;
+  if(!usingRealBackend || !state.user) return;
+  const owned = state.user.purchased.includes(id) || state.user._authUserId;
   if(!owned) return;
+
   const box = document.getElementById("resourceFile_"+id);
   if(!box) return;
-  const url = await getResourceFileUrl(r);
-  if(!url){
-    box.innerHTML = '<div class="small muted">Could not open the uploaded notes. The file storage permissions need attention.</div>';
+
+  let r = RESOURCES.find(x=>x.id===id);
+  if(!r) return;
+
+  // Refresh the file metadata from the authoritative resource row.
+  try{
+    const {data: dbRow, error} = await sb.from("resources")
+      .select("id,creator_id,has_file,file_name,file_type,file_url,status")
+      .eq("id",id).maybeSingle();
+
+    if(!error && dbRow){
+      r.hasFile = !!dbRow.has_file;
+      r.fileName = dbRow.file_name || r.fileName || "";
+      r.fileType = dbRow.file_type || r.fileType || "";
+      r.fileUrl = dbRow.file_url || r.fileUrl || "";
+      r.creatorId = dbRow.creator_id || r.creatorId;
+    }
+  }catch(e){
+    console.warn("Could not refresh resource file metadata:",e);
+  }
+
+  const isOwner = state.user._authUserId === r.creatorId;
+  const hasAccess = state.user.purchased.includes(id) || isOwner;
+  if(!hasAccess){
+    box.innerHTML = '<div class="small muted">Purchase this resource to open the uploaded notes.</div>';
     return;
   }
-  const safeUrl = url.replace(/"/g,'&quot;');
-  box.innerHTML = (r.fileType||"").startsWith("image/")
-    ? `<img src="${safeUrl}" alt="Uploaded notes" style="max-width:100%; max-height:800px; object-fit:contain; border-radius:10px; display:block; margin:auto;">`
-      + `<div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;"><button class="btn btn-outline btn-sm" type="button" onclick="openResourceFile('${id}')">Open full size</button></div>`
-    : `<iframe src="${safeUrl}" title="Uploaded notes" style="width:100%; height:650px; border:0; border-radius:8px; background:#fff;"></iframe>`
-      + `<div style="margin-top:10px;"><button class="btn btn-outline btn-sm" type="button" onclick="openResourceFile('${id}')">Open / download PDF</button></div>`;
+
+  let fileName = r.fileName || "";
+  let fileType = r.fileType || "";
+  let url = null;
+
+  // First try the recorded filename/path.
+  if(fileName){
+    url = await getResourceFileUrl({...r, hasFile:true});
+  }
+
+  // If metadata is incomplete, look inside the resource's storage folder.
+  if(!url){
+    try{
+      const {data: objects, error:listErr} = await sb.storage.from("resources").list(id,{limit:100});
+      if(!listErr && objects?.length){
+        const candidate = objects.find(o => o.name && !o.name.endsWith("/"));
+        if(candidate){
+          fileName = candidate.name;
+          const path = id+"/"+candidate.name;
+          const signed = await sb.storage.from("resources").createSignedUrl(path,3600);
+          if(!signed.error && signed.data?.signedUrl){
+            url = signed.data.signedUrl;
+            fileType = fileType || (/\.(png|jpe?g|gif|webp)$/i.test(candidate.name) ? "image/*" : "application/pdf");
+          }else{
+            const pub = sb.storage.from("resources").getPublicUrl(path);
+            url = pub?.data?.publicUrl || null;
+          }
+        }
+      }
+    }catch(e){
+      console.warn("Storage file discovery failed:",e);
+    }
+  }
+
+  if(!url){
+    box.innerHTML = `<div class="small muted">The purchase is valid, but the uploaded file could not be located in Supabase Storage. Check that the file exists in the resources bucket under folder ${id}.</div>`;
+    return;
+  }
+
+  const safeUrl = String(url).replace(/"/g,'&quot;');
+  const lowerType = String(fileType||"").toLowerCase();
+  const isImage = lowerType.startsWith("image/") || /\.(png|jpe?g|gif|webp)(\?|$)/i.test(fileName);
+
+  box.innerHTML = isImage
+    ? `<img src="${safeUrl}" alt="Uploaded notes" style="max-width:100%; max-height:900px; object-fit:contain; border-radius:10px; display:block; margin:auto;" onerror="this.parentElement.innerHTML='<div class=&quot;small muted&quot;>The image could not be displayed. The storage URL or bucket access needs attention.</div>'">`
+      + `<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-primary btn-sm" type="button" onclick="openResourceFile('${id}')">Open full size</button></div>`
+    : `<iframe src="${safeUrl}" title="Uploaded notes" style="width:100%;height:700px;border:0;border-radius:8px;background:#fff;"></iframe>`
+      + `<div style="margin-top:10px;"><button class="btn btn-primary btn-sm" type="button" onclick="openResourceFile('${id}')">Open / download file</button></div>`;
 }
 window.hydrateResourceFile = hydrateResourceFile;
 
@@ -2970,8 +3066,10 @@ async function restoreSupabaseSession(){
     let kvSaved = null;
     if(authUsername){
       const rawSaved = await Store.get(userKey(authUsername));
-      if(rawSaved){
-        try{ kvSaved = JSON.parse(rawSaved); }catch(e){ console.warn("Saved profile data parse failed:", e); }
+      const localSaved = (()=>{ try{ return localStorage.getItem("vidyaloop_user_"+authUsername.trim().toLowerCase()); }catch(e){ return null; } })();
+      const raw = rawSaved || localSaved;
+      if(raw){
+        try{ kvSaved = JSON.parse(raw); }catch(e){ console.warn("Saved profile data parse failed:", e); }
       }
     }
     const saved = {
