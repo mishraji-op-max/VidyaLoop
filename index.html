@@ -792,7 +792,7 @@ function nav(route, params={}){
     stopFacecam();
     toast("Facecam recording stopped — camera released.");
   }
-  state.route = route; state.params = params; window.scrollTo(0,0); render();
+  state.route = route; state.params = params; window.scrollTo(0,0); render(); if(route==="library" && usingRealBackend) loadPurchasedResources();
 }
 window.nav = nav;
 
@@ -831,8 +831,13 @@ function establishSession(name, cls, board, saved, isOwner, loginMeta, accountTy
   if(state.user.accountType==="store_owner") loadMyStore();
   if(usingRealBackend){
     loadPointTransactions();
-    loadResourcesFromDB();
-    loadPurchasedResources();
+    // Load resources first, then overlay the user's purchases. Running both
+    // concurrently can cause a late resources refresh to wipe the purchased
+    // resource cache used by My Library.
+    loadResourcesFromDB().then(()=>loadPurchasedResources()).catch(err=>{
+      console.error("Initial resource/library load failed:", err);
+      loadPurchasedResources();
+    });
     loadDoubtsFromDB();
   }
 }
@@ -884,11 +889,16 @@ window.loadResourcesFromDB = loadResourcesFromDB;
 async function loadPurchasedResources(){
   if(!usingRealBackend || !state.user?._authUserId) return;
   const uidNow = state.user._authUserId;
-  const { data: purchases, error } = await sb.from("resource_purchases")
+
+  // Supabase is the source of truth for ownership.
+  const { data: purchases, error: purchaseErr } = await sb
+    .from("resource_purchases")
     .select("resource_id")
     .eq("user_id", uidNow);
-  if(error){
-    console.error("loadPurchasedResources failed:", error);
+
+  if(purchaseErr){
+    console.error("loadPurchasedResources failed:", purchaseErr);
+    toast("Couldn't load My Library: " + purchaseErr.message);
     return;
   }
 
@@ -897,21 +907,33 @@ async function loadPurchasedResources(){
   persistUser();
 
   if(ids.length){
-    const { data: purchasedRows, error: resErr } = await sb.from("resources")
-      .select("*, profiles(name)")
+    // Deliberately use select("*") here instead of an embedded profiles join.
+    // The purchase itself does not depend on the profiles relationship.
+    const { data: purchasedRows, error: resErr } = await sb
+      .from("resources")
+      .select("*")
       .in("id", ids);
+
     if(resErr){
       console.error("loadPurchasedResources resources failed:", resErr);
-    } else {
-      const byId = {};
-      RESOURCES.forEach(r=>byId[r.id]=r);
-      (purchasedRows||[]).forEach(r=>byId[r.id]=mapDbResource(r));
-      RESOURCES.length = 0;
-      RESOURCES.push(...Object.values(byId));
+      toast("Couldn't load purchased notes: " + resErr.message);
+      return;
     }
+
+    const byId = {};
+    RESOURCES.forEach(r=>byId[r.id]=r);
+    (purchasedRows||[]).forEach(r=>{
+      const mapped = mapDbResource(r);
+      if(!mapped.creator) mapped.creator = "Student";
+      byId[mapped.id] = mapped;
+    });
+    RESOURCES.length = 0;
+    RESOURCES.push(...Object.values(byId));
   }
+
   render();
 }
+
 window.loadPurchasedResources = loadPurchasedResources;
 
 function mapDbResource(r){
