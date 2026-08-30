@@ -382,6 +382,33 @@ async function uploadFileToStorage(resId, file){
   const { data } = sb.storage.from("resources").getPublicUrl(path);
   return data.publicUrl;
 }
+async function getResourceFileUrl(r){
+  if(!usingRealBackend || !r?.hasFile || !r?.fileName || !r?.id) return r?.fileUrl || null;
+
+  // Prefer a short-lived signed URL. This works when the resources bucket is
+  // private and does not expose paid notes publicly.
+  const path = r.id + "/" + r.fileName;
+  try{
+    const { data, error } = await sb.storage.from("resources").createSignedUrl(path, 3600);
+    if(!error && data?.signedUrl) return data.signedUrl;
+  }catch(e){
+    console.warn("Signed resource URL failed:", e);
+  }
+
+  // Fall back to the stored public URL for installations where the bucket is public.
+  return r.fileUrl || null;
+}
+
+async function openResourceFile(id){
+  const r = RESOURCES.find(x=>x.id===id);
+  if(!r) return toast("Resource not found.");
+  if(!r.hasFile || !r.fileName) return toast("This resource has no uploaded file.");
+  const url = await getResourceFileUrl(r);
+  if(!url) return toast("Couldn't open the uploaded notes.");
+  window.open(url, "_blank", "noopener");
+}
+window.openResourceFile = openResourceFile;
+
 async function uploadStoreLogo(storeId, file){
   if(!usingRealBackend || !file) return null;
   const path = storeId+"/"+file.name;
@@ -1615,12 +1642,14 @@ function resumeFocus(){
   render();
 }
 window.resumeFocus = resumeFocus;
-function endFocus(){
+async function endFocus(){
   clearInterval(state.focus.timer);
   const mins = Math.round(state.focus.elapsed/60000);
   if(mins>0){
     state.focus.log.push({date:new Date().toDateString(), minutes:mins, subject:state.focus.subject});
-    persistUser();
+    // Wait for the KV write to finish. This prevents a quick reload from
+    // racing the save and losing the just-completed focus session.
+    await persistUser();
     notify("Focus session logged", mins+" minutes of "+state.focus.subject+" recorded.");
   }
   state.focus.active=false; state.focus.paused=false; state.focus.elapsed=0;
@@ -2159,11 +2188,11 @@ function viewResource(id){
         <hr class="div">
         <p style="font-size:14.5px; line-height:1.6;">${r.description}</p>
 
-        ${r.hasFile && r.fileUrl && (owned || isOwn) ? `
+        ${r.hasFile && (owned || isOwn) ? `
         <div class="section-title" style="margin-top:24px;"><h3 style="font-size:16px;">Uploaded file</h3></div>
-        <div class="card">
-          ${(r.fileType||"").startsWith("image/") ? `<img src="${r.fileUrl}" style="max-width:100%; border-radius:10px;">` : `<embed src="${r.fileUrl}" type="application/pdf" style="width:100%; height:500px; border-radius:8px;">`}
-          <div style="margin-top:10px;"><a class="btn btn-outline btn-sm" href="${r.fileUrl}" target="_blank" download="${r.fileName||"resource"}">⬇ Download</a></div>
+        <div class="card" id="resourceFile_${r.id}">
+          <div class="small muted" style="margin-bottom:10px;">Loading your uploaded notes…</div>
+          <button class="btn btn-primary btn-sm" type="button" onclick="openResourceFile('${r.id}')">Open notes</button>
         </div>
         ` : `
         <div class="section-title" style="margin-top:24px;"><h3 style="font-size:16px;">Random sample preview</h3><span class="small muted">Showing ${sampleCount} of ${r.pages} pages · reshuffles each visit</span></div>
@@ -2854,6 +2883,27 @@ function viewSearch(){
 }
 
 /* ---------------- MAIN RENDER ---------------- */
+async function hydrateResourceFile(id){
+  const r = RESOURCES.find(x=>x.id===id);
+  if(!r || !r.hasFile || !state.user) return;
+  const owned = state.user.purchased.includes(id) || r.creatorId === state.user._authUserId;
+  if(!owned) return;
+  const box = document.getElementById("resourceFile_"+id);
+  if(!box) return;
+  const url = await getResourceFileUrl(r);
+  if(!url){
+    box.innerHTML = '<div class="small muted">Could not open the uploaded notes. The file storage permissions need attention.</div>';
+    return;
+  }
+  const safeUrl = url.replace(/"/g,'&quot;');
+  box.innerHTML = (r.fileType||"").startsWith("image/")
+    ? `<img src="${safeUrl}" alt="Uploaded notes" style="max-width:100%; max-height:800px; object-fit:contain; border-radius:10px; display:block; margin:auto;">`
+      + `<div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;"><button class="btn btn-outline btn-sm" type="button" onclick="openResourceFile('${id}')">Open full size</button></div>`
+    : `<iframe src="${safeUrl}" title="Uploaded notes" style="width:100%; height:650px; border:0; border-radius:8px; background:#fff;"></iframe>`
+      + `<div style="margin-top:10px;"><button class="btn btn-outline btn-sm" type="button" onclick="openResourceFile('${id}')">Open / download PDF</button></div>`;
+}
+window.hydrateResourceFile = hydrateResourceFile;
+
 function render(){
   document.documentElement.setAttribute("data-theme", state.theme);
   const app = document.getElementById("app");
@@ -2889,6 +2939,9 @@ function render(){
   }
   app.innerHTML = (usingRealBackend? "" : `<div style="background:#7A2E2E; color:#fff; text-align:center; padding:8px 16px; font-size:12.5px; font-weight:600;">⚠️ Offline demo mode — Supabase isn't configured yet, so nothing will be saved permanently. See the setup instructions to connect a real backend.</div>`) + html;
   if(state.route==="assistant") renderChatLog();
+  if(state.route==="resource" && state.params?.id && usingRealBackend){
+    hydrateResourceFile(state.params.id);
+  }
   if(state.route==="focus" && state.facecamActive && facecamStream){
     const v = document.getElementById("facecamPreview");
     if(v) v.srcObject = facecamStream;
