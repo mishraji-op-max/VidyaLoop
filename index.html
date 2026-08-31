@@ -74,6 +74,11 @@ button{font-family:inherit; cursor:pointer;}
 .navlinks button{background:none; border:none; color:var(--muted); padding:8px 12px; border-radius:8px; font-size:14px; font-weight:500; white-space:nowrap; transition:all .15s;}
 .navlinks button:hover{color:var(--text); background:var(--surface2);}
 .navlinks button.active{color:var(--text); background:var(--surface3); box-shadow:inset 0 0 0 1px var(--border2);}
+.navlinks{scrollbar-width:thin; scrollbar-color:var(--border2) transparent; scrollbar-gutter:stable;}
+.navlinks::-webkit-scrollbar{height:6px;}
+.navlinks::-webkit-scrollbar-track{background:transparent;}
+.navlinks::-webkit-scrollbar-thumb{background:var(--border2); border-radius:999px;}
+.navlinks::-webkit-scrollbar-thumb:hover{background:var(--violet2);}
 .navright{display:flex; align-items:center; gap:10px; flex-shrink:0;}
 .searchbox{display:flex; align-items:center; gap:6px; background:var(--surface2); border:1px solid var(--border); border-radius:20px; padding:6px 12px; width:180px;}
 .searchbox input{background:none; border:none; outline:none; color:var(--text); font-size:13px; width:100%;}
@@ -382,56 +387,6 @@ async function uploadFileToStorage(resId, file){
   const { data } = sb.storage.from("resources").getPublicUrl(path);
   return data.publicUrl;
 }
-async function getResourceFileUrl(r){
-  if(!r?.id) return null;
-  let fileName=r.fileName||null;
-  let fileType=r.fileType||null;
-  let fileUrl=r.fileUrl||null;
-
-  if(usingRealBackend){
-    // Refresh the DB row because older client caches may have has_file/file_name=false/null.
-    try{
-      const {data,rowError}=await sb.from("resources").select("id,has_file,file_name,file_type,file_url").eq("id",r.id).maybeSingle();
-      if(data){ fileName=data.file_name||fileName; fileType=data.file_type||fileType; fileUrl=data.file_url||fileUrl; r.hasFile=!!data.has_file; r.fileName=fileName; r.fileType=fileType; r.fileUrl=fileUrl; }
-    }catch(e){ console.warn("Resource metadata refresh failed:",e); }
-
-    // If the filename column is missing, discover the first object inside this resource's folder.
-    if(!fileName){
-      try{
-        const {data,error}=await sb.storage.from("resources").list(r.id,{limit:100,sortBy:{column:"name",order:"asc"}});
-        if(!error && data?.length){
-          const file=data.find(x=>x.name && !x.id?.endsWith("/")) || data.find(x=>x.name);
-          if(file) fileName=file.name;
-        }
-      }catch(e){ console.warn("Resource storage listing failed:",e); }
-    }
-
-    if(fileName){
-      const path=r.id+"/"+fileName;
-      try{
-        const {data,error}=await sb.storage.from("resources").createSignedUrl(path,3600);
-        if(!error && data?.signedUrl) return data.signedUrl;
-        console.warn("Signed URL failed:",error);
-      }catch(e){ console.warn("Signed URL exception:",e); }
-      try{
-        const {data}=sb.storage.from("resources").getPublicUrl(path);
-        if(data?.publicUrl) return data.publicUrl;
-      }catch(e){}
-    }
-  }
-  return fileUrl||null;
-}
-
-async function openResourceFile(id){
-  const r = RESOURCES.find(x=>x.id===id);
-  if(!r) return toast("Resource not found.");
-  if(!r.fileName && !r.fileUrl) return toast("The uploaded file could not be located in Storage.");
-  const url = await getResourceFileUrl(r);
-  if(!url) return toast("Couldn't open the uploaded notes.");
-  window.open(url, "_blank", "noopener");
-}
-window.openResourceFile = openResourceFile;
-
 async function uploadStoreLogo(storeId, file){
   if(!usingRealBackend || !file) return null;
   const path = storeId+"/"+file.name;
@@ -464,95 +419,12 @@ function slugEmail(name){ return name.trim().toLowerCase().replace(/[^a-z0-9]+/g
 
 function userKey(name){ return "user:"+normalizeUsername(name); }
 
-function focusStorageKey(){
-  const id = state.user?._authUserId || state.user?.username || state.user?.id;
-  return id ? "vidyaloop:focus:v2:"+id : "vidyaloop:focus:v2:guest";
-}
-function focusKvKey(){
-  const id = state.user?._authUserId || state.user?.username || state.user?.id;
-  return id ? "focus:"+id : null;
-}
-function focusSnapshot(){
-  return {
-    log: Array.isArray(state.focus.log) ? state.focus.log : [],
-    active: !!state.focus.active,
-    paused: !!state.focus.paused,
-    startedAt: state.focus.startedAt || null,
-    elapsed: Number(state.focus.elapsed)||0,
-    subject: state.focus.subject || "",
-    savedAt: Date.now()
-  };
-}
-function saveFocusLocal(){
-  try{
-    const snap=focusSnapshot();
-    localStorage.setItem(focusStorageKey(), JSON.stringify(snap));
-    // A second key keyed by username helps if an auth/session identifier changes.
-    if(state.user?.username) localStorage.setItem("vidyaloop:focus:v2:user:"+normalizeUsername(state.user.username), JSON.stringify(snap));
-  }catch(e){ console.warn("Focus local save failed:", e); }
-}
-async function saveFocusPersistent(){
-  saveFocusLocal();
-  const key=focusKvKey();
-  if(usingRealBackend && key){
-    try{ await Store.set(key, JSON.stringify(focusSnapshot()), true); }
-    catch(e){ console.warn("Focus KV save failed:",e); }
-  }
-}
-function readLocalFocus(){
-  const keys=[focusStorageKey()];
-  if(state.user?.username) keys.push("vidyaloop:focus:v2:user:"+normalizeUsername(state.user.username));
-  for(const k of keys){
-    try{ const raw=localStorage.getItem(k); if(raw) return JSON.parse(raw); }catch(e){}
-  }
-  return null;
-}
-async function restoreFocusPersistence(){
-  let saved=readLocalFocus();
-  const key=focusKvKey();
-  if(usingRealBackend && key){
-    try{
-      const raw=await Store.get(key);
-      if(raw){ const kv=JSON.parse(raw); if(!saved || (kv.savedAt||0)>(saved.savedAt||0)) saved=kv; }
-    }catch(e){ console.warn("Focus KV restore failed:",e); }
-  }
-  if(!saved) return;
-  if(Array.isArray(saved.log)) state.focus.log=saved.log;
-  if(saved.active){
-    state.focus.active=true;
-    state.focus.paused=!!saved.paused;
-    state.focus.subject=saved.subject||"General";
-    state.focus.elapsed=Number(saved.elapsed)||0;
-    if(!state.focus.paused && saved.startedAt){
-      state.focus.startedAt=Number(saved.startedAt);
-      state.focus.elapsed=Math.max(state.focus.elapsed,Date.now()-state.focus.startedAt);
-    }else state.focus.startedAt=saved.startedAt||Date.now();
-    startFocusInterval();
-  }else{
-    state.focus.active=false;
-    state.focus.paused=false;
-    state.focus.startedAt=null;
-    state.focus.elapsed=0;
-  }
-}
-function startFocusInterval(){
-  clearInterval(state.focus.timer);
-  state.focus.timer=setInterval(()=>{
-    if(state.focus.active && !state.focus.paused){
-      state.focus.elapsed=Math.max(0,Date.now()-state.focus.startedAt);
-      saveFocusLocal();
-      renderFocusTimerOnly();
-    }
-  },1000);
-}
-
 async function persistUser(){
   if(!state.user) return;
-  saveFocusLocal();
   const u = state.user;
   const record = {
     name:u.name, fullName:u.fullName || u.name, username:u.username || u.name, class:u.class, board:u.board, bio:u.bio,
-    points:u.points, reputation:u.reputation, level:u.level, badges:u.badges,
+    ...(usingRealBackend ? {} : {points:u.points}), reputation:u.reputation, level:u.level, badges:u.badges,
     uploaded:u.uploaded, purchased:u.purchased, saved:u.saved, asked:u.asked, answeredIds:u.answeredIds,
     ratedResources:u.ratedResources, redeemed:u.redeemed, recentlyViewed:u.recentlyViewed,
     quizHistory:u.quizHistory, streak:u.streak, joinDate:u.joinDate,
@@ -773,39 +645,29 @@ const AIService = {
     const rawQ = query.trim();
     const q = rawQ.toLowerCase();
 
-    // Intent 1: summarize/explain pasted material
+    // Intent 1: summarize/explain a pasted passage
     const explicitSummarize = /^(summarize|summarise|explain this|tldr|tl;dr)[:\s]/i.test(rawQ);
     const looksLikePastedContent = rawQ.split(/\s+/).length > 45;
     if(explicitSummarize || looksLikePastedContent){
       const content = rawQ.replace(/^(summarize|summarise|explain this|tldr|tl;dr)[:\s]*/i,'');
-      if(content.split(/\s+/).length < 15) return {text:"Paste a longer passage and I'll turn it into concise study notes.", resources:[]};
-      const summary = AIService.summarize(content);
-      return {text:`Study notes from what you shared:\n\n${summary}\n\nI can also help turn this into revision points or a quiz.`, resources:[]};
-    }
-
-    // Intent 2: explicitly ask to derive/make notes
-    const wantsNotes = /\b(make|create|derive|prepare|give|generate|write)\b.*\b(notes|revision notes|study notes|summary|cheat sheet)\b/i.test(rawQ)
-      || /\bnotes\s+(on|for|about)\b/i.test(rawQ);
-    if(wantsNotes){
-      const match = KNOWLEDGE_BASE.find(k=>k.keywords.some(kw=>q.includes(kw)));
-      if(match){
-        const title = match.keywords[0].replace(/\b\w/g,c=>c.toUpperCase());
-        return {text:`Quick revision notes — ${title}\n\n${match.explanation}\n\nKey points to remember:\n• Learn the definition and main idea.\n• Note the important formula, relationship or example.\n• Practise one or two questions on the topic.`, resources:[]};
+      if(content.split(/\s+/).length < 15){
+        return {text:"Paste a longer passage (a paragraph or more) and I'll summarize and explain the key points for you.", resources:[]};
       }
-      return {text:"I can turn a topic into concise revision notes when it matches my built-in study topics. Try a specific topic such as 'make notes on gravitation' or paste your own notes and I'll condense them.", resources:[]};
+      const summary = AIService.summarize(content);
+      return {text:`Here's a summary of what you shared:\n\n${summary}\n\nWant me to explain a specific part further, or generate a quick quiz from it?`, resources:[]};
     }
 
-    // Intent 3: direct doubt answering
-    const looksLikeSearch = /class\s?\d|under\s?\d+|below\s?\d+|\d+\s?points?|cheapest|cheap notes|best rated|top rated|highest rat|compare|find|search|notes?\b/.test(q);
-    const looksLikeQuestion = /^(what|why|how|explain|define|when|who|where|which|tell me|is|are|can|does|do|difference between)\b/.test(q) || q.endsWith("?");
+    // Intent 2: answer a conceptual doubt directly
+    const looksLikeSearch = /class\s?\d|under\s?\d+|below\s?\d+|\d+\s?points?|cheapest|cheap notes|best rated|top rated|highest rat|compare/.test(q);
+    const looksLikeQuestion = /^(what|why|how|explain|define|when|who|tell me about|help me|help|can you|could you|teach me|describe|difference between|compare)\b/.test(q) || q.endsWith("?") || /(can't understand|cannot understand|dont understand|don't understand|confused|stuck)/.test(q);
     if(looksLikeQuestion && !looksLikeSearch){
       const explanation = AIService.explainDoubt(q);
-      if(explanation) return {text:`${explanation}\n\nIf you want, ask me to make revision notes on this topic or find related notes on VidyaLoop.`, resources:[]};
-      return {text:"I couldn't confidently answer that from my built-in study knowledge. Try rephrasing the doubt with the exact topic/chapter, or post it on the Doubts board so another student can help.", resources:[]};
+      if(explanation) return {text:`${explanation}\n\nWant me to also find notes on this topic, or generate a quick quiz to test yourself?`, resources:[]};
+      return {text:"I don't have a ready explanation for that specific one — try posting it on the Doubts board so another student can help, or ask me about a named topic (e.g. \"explain trigonometry\" or \"what is Newton's second law\").", resources:[]};
     }
 
-    // Intent 4: find/search resources
-    let pool = RESOURCES.filter(r=>r.status==="approved");
+    // Intent 3: fall back to marketplace resource recommendations
+    let pool = RESOURCES.slice();
     let note = "";
     const subjMatch = SUBJECTS.find(s=>q.includes(s.toLowerCase()));
     if(subjMatch){ pool = pool.filter(r=>r.subject===subjMatch); note+=` in ${subjMatch}`; }
@@ -813,20 +675,18 @@ const AIService = {
     if(clsMatch){ const c=Number(clsMatch[1]); pool=pool.filter(r=>r.class===c); note+=` for Class ${c}`; }
     const underMatch = q.match(/under\s?(\d+)|below\s?(\d+)|(\d+)\s?points?/);
     if(underMatch){ const n=Number(underMatch[1]||underMatch[2]||underMatch[3]); if(n){ pool=pool.filter(r=>r.price<=n); note+=` under ${n} points`; } }
-    const topicWords = ["chapter","topic","revision","notes","study guide","worksheet","practice"].filter(w=>q.includes(w));
-    if(topicWords.length){
-      const terms=q.replace(/[^a-z0-9 ]/g," ").split(/\s+/).filter(w=>w.length>3 && !["find","best","notes","note","under","below","class","give","show","me","for","with","from","search","study","guide"].includes(w));
-      const topicPool=pool.filter(r=>terms.some(t=>(r.title+" "+r.chapter+" "+r.description).toLowerCase().includes(t)));
-      if(topicPool.length) pool=topicPool;
+    if(q.includes("highest rat") || q.includes("best rated") || q.includes("top rated")){
+      pool = pool.sort((a,b)=>b.rating-a.rating);
+    } else if(q.includes("cheap")){
+      pool = pool.sort((a,b)=>a.price-b.price);
+    } else {
+      pool = pool.sort((a,b)=>b.aiScore-a.aiScore);
     }
-    if(q.includes("highest rat") || q.includes("best rated") || q.includes("top rated")) pool=pool.sort((a,b)=>b.rating-a.rating);
-    else if(q.includes("cheap") || q.includes("lowest")) pool=pool.sort((a,b)=>a.price-b.price);
-    else pool=pool.sort((a,b)=>b.aiScore-a.aiScore);
-    pool=pool.slice(0,3);
-    if(!pool.length) return {text:`I couldn't find resources matching that${note}. Try a broader subject, class or budget, or upload the first resource for that topic.`, resources:[]};
-    const top=pool[0];
-    let text=`Here's what I found${note || ""}:\n\nTop pick: ${top.title}\nAI score: ${top.aiScore}/100 · Rating: ${top.rating}/5 · Price: ${top.price} pts\nTopic: ${top.chapter}\nWhy: ${top.pros[0]?.toLowerCase()||"good topic coverage"}.`;
-    if(pool.length>1) text+=`\n\nI also found ${pool.length-1} more option${pool.length>2?"s":""}. Ask me to compare them.`;
+    pool = pool.slice(0,3);
+    if(!pool.length) return {text:`I couldn't find resources matching that${note}. Try broadening the class, subject or budget — or if nothing's been uploaded for this topic yet, be the first to upload one!`, resources:[]};
+    const top = pool[0];
+    let text = `Here's what I'd recommend${note || " overall"}:\n\nTop pick: ${top.title}\nAI score: ${top.aiScore}/100 · Rating: ${top.rating}/5 · Price: ${top.price} pts\nWhy: ${top.pros[0]?.toLowerCase()||"solid coverage"}${top.pros[1]?", "+top.pros[1].toLowerCase():""}.\nWorth noting: ${top.cons[0]?.toLowerCase()||"no major drawbacks flagged"}.`;
+    if(pool.length>1) text += `\n\nI also found ${pool.length-1} more option${pool.length>2?"s":""} below — ask me to compare them if you'd like.`;
     return {text, resources:pool};
   },
   generateQuiz(resource, count){
@@ -872,7 +732,7 @@ const ADMIN_CONFIG = {
   reportPenalty: 8,
   notHelpfulPenalty: 3,
   maxResourcePrice: 150,
-  autoApproveThreshold: 20,
+  autoApproveThreshold: 70,
   dailyPointCap: 40
 };
 function localStorageGet(){ return null; } // no persistent storage in this sandbox demo
@@ -925,13 +785,7 @@ function nav(route, params={}){
     stopFacecam();
     toast("Facecam recording stopped — camera released.");
   }
-  state.route = route; state.params = params; window.scrollTo(0,0);
-  if(route==="library" && usingRealBackend){
-    render();
-    loadPurchasedResources();
-  } else {
-    render();
-  }
+  state.route = route; state.params = params; window.scrollTo(0,0); render();
 }
 window.nav = nav;
 
@@ -943,12 +797,30 @@ async function hashPassword(pw){
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
 }
 
-async function establishSession(name, cls, board, saved, isOwner, loginMeta, accountType){
+async function refreshAuthoritativeAccount(){
+  if(!usingRealBackend || !state.user?._authUserId) return;
+  try{
+    const acct = await fetchAccountData(state.user._authUserId);
+    if(acct.points !== undefined && acct.points !== null && Number.isFinite(Number(acct.points))) state.user.points = Number(acct.points);
+    if(acct.reputation !== undefined && acct.reputation !== null && Number.isFinite(Number(acct.reputation))) state.user.reputation = Number(acct.reputation);
+    if(acct.streak !== undefined && acct.streak !== null) state.user.streak = acct.streak;
+    renderNavOnly();
+    if(["dashboard","profile","store"].includes(state.route)) render();
+  }catch(e){ console.error("Authoritative account refresh failed:", e); }
+}
+
+function focusStorageKey(){ return "vidyaloop:focus:"+(state.user?._authUserId || state.user?.id || "guest"); }
+function loadLocalFocusLog(fallback=[]){
+  try{ const raw=localStorage.getItem(focusStorageKey()); const parsed=raw?JSON.parse(raw):null; return Array.isArray(parsed)?parsed:(Array.isArray(fallback)?fallback:[]); }catch(e){ return Array.isArray(fallback)?fallback:[]; }
+}
+function saveLocalFocusLog(){ try{ localStorage.setItem(focusStorageKey(), JSON.stringify(state.focus.log||[])); }catch(e){} }
+
+function establishSession(name, cls, board, saved, isOwner, loginMeta, accountType){
   state.user = {
     id: loginMeta.authUserId || uid("u"), name, username: loginMeta.username || saved?.username || name, fullName: saved?.fullName || name, class: saved?.class || Number(cls) || 9, board: board||saved?.board||"CBSE",
     accountType: accountType || saved?.accountType || "student",
     subjects: SUBJECTS.slice(0,4), bio: saved?.bio || "", avatarColor: colorFor(name||"A"),
-    points: saved?.points ?? 50, reputation: saved?.reputation ?? 50, level: saved?.level || "New Member",
+    points: usingRealBackend ? (Number.isFinite(Number(saved?.points)) ? Number(saved.points) : 0) : (saved?.points ?? 50), reputation: saved?.reputation ?? 50, level: saved?.level || "New Member",
     badges: saved?.badges || [], isOwner,
     uploaded: saved?.uploaded || [], purchased: saved?.purchased || [], saved: saved?.saved || [],
     asked: saved?.asked || [], answeredIds: saved?.answeredIds || [], ratedResources: saved?.ratedResources || [],
@@ -961,26 +833,18 @@ async function establishSession(name, cls, board, saved, isOwner, loginMeta, acc
     _authUserId: loginMeta.authUserId || null
   };
   state.transactions = saved?.transactions || [{id:uid("tx"), reason:"Welcome bonus", amount:50, ts:Date.now(), balance:50}];
-  state.focus.log = saved?.focusLog || [];
-  await restoreFocusPersistence();
+  state.focus.log = loadLocalFocusLog(saved?.focusLog || []);
   state.subscription = null; // no subscriptions table in this schema — Premium/promo UI stays but is inert
   state.notifications = [{id:uid("n"), title: saved? "Welcome back 👋" : "Welcome to VidyaLoop 👋", desc: saved? "Your stats and progress are right where you left them." : "Start by exploring the marketplace or asking a doubt.", ts:Date.now(), read:false}];
   nav(state.user.accountType==="store_owner" ? "storeDashboard" : "dashboard");
   toast(isOwner? "Logged in as "+state.user.name+" (Owner)" : "Logged in as "+state.user.name);
   persistUser();
+  if(usingRealBackend) setTimeout(()=>refreshAuthoritativeAccount(), 0);
   if(state.user.accountType==="store_owner") loadMyStore();
   if(usingRealBackend){
     loadPointTransactions();
-    // Load resources first, then overlay the user's purchases. Running both
-    // concurrently can cause a late resources refresh to wipe the purchased
-    // resource cache used by My Library.
-    try{
-      await loadResourcesFromDB();
-      await loadPurchasedResources();
-    }catch(err){
-      console.error("Initial resource/library load failed:", err);
-    }
-    await loadDoubtsFromDB();
+    loadResourcesFromDB();
+    loadDoubtsFromDB();
   }
 }
 
@@ -1024,56 +888,6 @@ async function loadResourcesFromDB(){
   render();
 }
 window.loadResourcesFromDB = loadResourcesFromDB;
-
-/* Purchases are stored in resource_purchases, not in the profile.
-   Keep the local purchased list synchronized with the database so
-   purchased resources survive reloads and appear in My Library. */
-async function loadPurchasedResources(){
-  if(!usingRealBackend || !state.user?._authUserId) return;
-  const uidNow = state.user._authUserId;
-
-  const { data: purchases, error: purchaseErr } = await sb
-    .from("resource_purchases")
-    .select("resource_id")
-    .eq("user_id", uidNow);
-
-  if(purchaseErr){
-    console.error("loadPurchasedResources failed:", purchaseErr);
-    toast("Couldn't load My Library: " + purchaseErr.message);
-    return;
-  }
-
-  const ids = [...new Set((purchases || []).map(p => p.resource_id).filter(Boolean))];
-  state.user.purchased = ids;
-
-  if(ids.length){
-    const { data: rows, error: resourceErr } = await sb
-      .from("resources")
-      .select("*")
-      .in("id", ids);
-
-    if(resourceErr){
-      console.error("load purchased resources failed:", resourceErr);
-      toast("Couldn't load purchased notes: " + resourceErr.message);
-      return;
-    }
-
-    const byId = Object.fromEntries(RESOURCES.map(r => [r.id, r]));
-    (rows || []).forEach(row => {
-      const mapped = mapDbResource(row);
-      if(!mapped.creator) mapped.creator = "Student";
-      byId[mapped.id] = mapped;
-    });
-    RESOURCES.length = 0;
-    RESOURCES.push(...Object.values(byId));
-  }
-
-  await persistUser();
-  if(state.route === "library") render();
-}
-window.loadPurchasedResources = loadPurchasedResources;
-
-window.loadPurchasedResources = loadPurchasedResources;
 
 function mapDbResource(r){
   return {
@@ -1268,36 +1082,25 @@ async function purchase(resId){
   const r = RESOURCES.find(x=>x.id===resId);
   const u = state.user;
   if(!u) return nav("login");
-  if(!r) return toast("Resource not found.");
-  if(r.creatorId===u.id || r.creatorId===u._authUserId) return toast("You can't purchase your own resource.");
+  if(r.creatorId===u.id) return toast("You can't purchase your own resource.");
   if(u.purchased.includes(resId)) return toast("Already in your library.");
   if(u.points < r.price) return toast("Not enough Reward Points.");
-
   if(usingRealBackend){
-    const { data, error } = await sb.rpc("purchase_resource", { p_resource_id: resId });
-    if(error){
-      console.error("purchase_resource failed:", error);
-      return toast(error.message || "Purchase failed. Nothing was deducted.");
-    }
-    if(!data?.success) return toast(data?.message || "Purchase failed. Nothing was deducted.");
-
-    // The database transaction is authoritative. Refresh balance and purchases.
-    const { data: rp } = await sb.from("reward_points").select("balance").eq("user_id",u._authUserId).maybeSingle();
-    if(rp && typeof rp.balance === "number") u.points = rp.balance;
-    else u.points = Math.max(0, u.points - r.price);
-    if(!u.purchased.includes(resId)) u.purchased.push(resId);
-    r.purchases = (r.purchases||0) + 1;
-    await loadPointTransactions();
-    toast("Purchase complete — added to your library.");
-    render();
-    return;
+    const { data: already } = await sb.from("resource_purchases").select("id").eq("resource_id",resId).eq("user_id",u._authUserId).maybeSingle();
+    if(already) return toast("Already in your library.");
+    const { data, error } = await sb.rpc("spend_reward_points", { target_user_id:u._authUserId, point_amount:r.price, point_reason:"Purchased: "+r.title });
+    if(error || data!==true){ toast("Purchase failed — points could not be deducted."); return; }
+    const { error: purchaseErr } = await sb.from("resource_purchases").insert({ resource_id:resId, user_id:u._authUserId });
+    if(purchaseErr){ console.error("resource_purchases insert failed:", purchaseErr); }
+    await sb.from("resources").update({ purchases: (r.purchases||0)+1 }).eq("id", resId);
+    u.points -= r.price;
+  } else {
+    u.points -= r.price;
+    addTx("Purchased: "+r.title, -r.price);
   }
-
-  // Offline fallback
-  u.points -= r.price;
-  addTx("Purchased: "+r.title, -r.price);
   u.purchased.push(resId);
-  r.purchases = (r.purchases||0) + 1;
+  r.purchases += 1;
+  if(usingRealBackend) loadPointTransactions();
   notify("Purchase complete", r.title+" added to your library.");
   render();
 }
@@ -1448,22 +1251,34 @@ async function redeemPromoCode(){
   if(!code) return toast("Enter a promo code.");
 
   const { data, error } = await sb.rpc("redeem_promo_code", { p_code: code });
+
   if(error){
-    console.error("Promo redemption failed:", error);
-    return toast(error.message || "Promo code could not be redeemed.");
+    console.error("redeem_promo_code failed:", error);
+    const msg = error.message || "Promo code could not be redeemed.";
+    return toast(msg);
   }
 
-  const result = Array.isArray(data) ? data[0] : data;
-  const points = Number(result?.points_awarded ?? result?.rp_bonus ?? 0);
-  if(!result?.success){
-    return toast(result?.message || "Promo code could not be redeemed.");
-  }
+  const points = Number(data?.points_awarded || 0);
+  if(points <= 0) return toast("Promo code redeemed, but no Reward Points were awarded.");
 
   if(input) input.value = "";
 
-  // Refresh from Supabase instead of incrementing a local value.
-  const fresh = await fetchAccountData(state.user._authUserId);
-  if(fresh.points !== undefined) state.user.points = fresh.points;
+  // Reload the authoritative balance/transactions from Supabase immediately.
+  try{
+    const { data: rp, error: rpErr } = await sb.from("reward_points")
+      .select("balance")
+      .eq("user_id", state.user._authUserId)
+      .maybeSingle();
+
+    if(!rpErr && rp && typeof rp.balance === "number"){
+      state.user.points = rp.balance;
+    } else {
+      state.user.points += points;
+    }
+  }catch(e){
+    state.user.points += points;
+  }
+
   await loadPointTransactions();
   toast("Promo redeemed! +"+points+" Reward Points.");
   render();
@@ -1728,69 +1543,45 @@ window.chipQuery = chipQuery;
 
 /* Focus mode */
 function startFocus(subject){
-  state.focus.active=true;
-  state.focus.paused=false;
-  state.focus.startedAt=Date.now();
-  state.focus.elapsed=0;
-  state.focus.subject=subject||"General";
-  saveFocusPersistent();
-  startFocusInterval();
+  state.focus.active = true; state.focus.paused=false; state.focus.startedAt = Date.now(); state.focus.elapsed = 0; state.focus.subject = subject||"General";
+  clearInterval(state.focus.timer);
+  state.focus.timer = setInterval(()=>{ state.focus.elapsed = Date.now()-state.focus.startedAt; renderFocusTimerOnly(); }, 1000);
   render();
 }
-window.startFocus=startFocus;
-async function pauseFocus(){
+window.startFocus = startFocus;
+function pauseFocus(){
   if(!state.focus.active || state.focus.paused) return;
-  state.focus.elapsed=Math.max(0,Date.now()-state.focus.startedAt);
   clearInterval(state.focus.timer);
-  state.focus.paused=true;
-  await saveFocusPersistent();
+  state.focus.paused = true;
   render();
 }
-window.pauseFocus=pauseFocus;
-async function resumeFocus(){
+window.pauseFocus = pauseFocus;
+function resumeFocus(){
   if(!state.focus.active || !state.focus.paused) return;
-  state.focus.paused=false;
-  state.focus.startedAt=Date.now()-(state.focus.elapsed||0);
-  startFocusInterval();
-  await saveFocusPersistent();
+  state.focus.paused = false;
+  state.focus.startedAt = Date.now() - state.focus.elapsed;
+  state.focus.timer = setInterval(()=>{ state.focus.elapsed = Date.now()-state.focus.startedAt; renderFocusTimerOnly(); }, 1000);
   render();
 }
-window.resumeFocus=resumeFocus;
-async function endFocus(){
-  if(!state.focus.active) return;
-  state.focus.elapsed=state.focus.paused ? Math.max(0,state.focus.elapsed||0) : Math.max(0,Date.now()-state.focus.startedAt);
+window.resumeFocus = resumeFocus;
+function endFocus(){
   clearInterval(state.focus.timer);
-  const seconds=Math.floor(state.focus.elapsed/1000);
-  if(seconds>0){
-    state.focus.log.push({date:new Date().toDateString(),minutes:Math.max(1,Math.round(seconds/60)),seconds,subject:state.focus.subject});
+  const mins = Math.round(state.focus.elapsed/60000);
+  if(mins>0){
+    state.focus.log.push({date:new Date().toDateString(), minutes:mins, subject:state.focus.subject});
+    saveLocalFocusLog();
+    persistUser();
+    notify("Focus session logged", mins+" minutes of "+state.focus.subject+" recorded.");
   }
-  const subject=state.focus.subject;
-  state.focus.active=false; state.focus.paused=false; state.focus.startedAt=null; state.focus.elapsed=0;
-  await saveFocusPersistent();
-  await persistUser();
-  if(seconds>0) notify("Focus session logged",Math.max(1,Math.round(seconds/60))+" minutes of "+subject+" recorded.");
+  state.focus.active=false; state.focus.paused=false; state.focus.elapsed=0;
   render();
 }
-window.endFocus=endFocus;
-
+window.endFocus = endFocus;
 function resetFocusSession(reasonMsg){
   clearInterval(state.focus.timer);
-  state.focus.active=false;
-  state.focus.paused=false;
-  state.focus.startedAt=null;
-  state.focus.elapsed=0;
-  saveFocusLocal();
+  state.focus.active=false; state.focus.paused=false; state.focus.elapsed=0;
   if(reasonMsg) notify("Focus session reset", reasonMsg);
 }
-
-document.addEventListener("visibilitychange", ()=>{
-  if(document.visibilityState === "visible" && state.focus.active && !state.focus.paused){
-    state.focus.elapsed = Math.max(0, Date.now()-state.focus.startedAt);
-    renderFocusTimerOnly();
-  }
-  if(state.focus.active) saveFocusPersistent();
-});
-window.addEventListener("pagehide", ()=>{ if(state.focus.active) saveFocusPersistent(); });
 
 /* ---------------- FACECAM RECORDING ----------------
    Everything here stays 100% local to the student's own browser.
@@ -1881,12 +1672,7 @@ async function doUploadResource(){
   if(!chapter.trim()) return toast("Please add the chapter/topic this resource covers.");
   const payload = { title, description, chapter, type:document.getElementById("uploadType").value, subject:document.getElementById("uploadSubject").value, pages:Number(document.getElementById("uploadPages").value)||6, class:Number(document.getElementById("uploadClass").value) };
   const evalResult = AIService.evaluateResource(payload);
-  // AI quality gate: scores below 20 are not accepted; all scores 20-100 go to admin review.
-  if(evalResult.score < 20){
-    toast("This resource scored "+evalResult.score+"/100 and cannot be submitted. Please improve the notes and try again.");
-    return;
-  }
-  const status = "pending";
+  const status = evalResult.score>=ADMIN_CONFIG.autoApproveThreshold ? "pending" : "needs_improvement";
 
   if(usingRealBackend){
     const row = {
@@ -2230,7 +2016,7 @@ function viewDashboard(){
   const recentDoubts = DOUBTS.slice(0,4);
   const quick = [
     ["🔍","Find Notes","marketplace"],["⬆️","Upload Notes","seller"],["❓","Ask a Doubt","askDoubt"],
-    ["🤝","Answer Doubts","doubts"],["⏱️","Focus Mode","focus"],["📝","Take a Quiz","quizLibrary"]
+    ["🤝","Answer Doubts","doubts"],["⏱️","Focus Mode","focus"],["📝","Take a Quiz","marketplace"]
   ];
   return `${navBar()}<div class="pagewrap"><div class="wrap">
     <div class="section-title"><div><h2>Welcome back, ${u.name.split(" ")[0]} 👋</h2><p class="muted small">Class ${u.class} · ${u.board} · ${u.streak}-day streak 🔥</p></div></div>
@@ -2318,11 +2104,11 @@ function viewResource(id){
         <hr class="div">
         <p style="font-size:14.5px; line-height:1.6;">${r.description}</p>
 
-        ${(owned || isOwn) ? `
-        <div class="section-title" style="margin-top:24px;"><h3 style="font-size:16px;">Your uploaded notes</h3></div>
-        <div class="card" id="resourceFile_${r.id}">
-          <div class="small muted" style="margin-bottom:10px;">Loading your uploaded notes…</div>
-          <button class="btn btn-primary btn-sm" type="button" onclick="openResourceFile('${r.id}')">Open notes</button>
+        ${r.hasFile && r.fileUrl && (owned || isOwn) ? `
+        <div class="section-title" style="margin-top:24px;"><h3 style="font-size:16px;">Uploaded file</h3></div>
+        <div class="card">
+          ${(r.fileType||"").startsWith("image/") ? `<img src="${r.fileUrl}" style="max-width:100%; border-radius:10px;">` : `<embed src="${r.fileUrl}" type="application/pdf" style="width:100%; height:500px; border-radius:8px;">`}
+          <div style="margin-top:10px;"><a class="btn btn-outline btn-sm" href="${r.fileUrl}" target="_blank" download="${r.fileName||"resource"}">⬇ Download</a></div>
         </div>
         ` : `
         <div class="section-title" style="margin-top:24px;"><h3 style="font-size:16px;">Random sample preview</h3><span class="small muted">Showing ${sampleCount} of ${r.pages} pages · reshuffles each visit</span></div>
@@ -2449,9 +2235,9 @@ function viewAssistant(){
     <div class="chatwin">
       <div class="chatlog" id="chatlog"></div>
       <div class="suggestchips">
-        <button class="chip" onclick="chipQuery('Find the best Class 9 Physics notes')">Best Class 9 Physics notes</button>
-        <button class="chip" onclick="chipQuery('Explain Newton\\'s laws of motion')">Explain Newton's laws</button>
-        <button class="chip" onclick="chipQuery('What is photosynthesis')">What is photosynthesis?</button>
+        <button class="chip" onclick="chipQuery(&quot;Find the best Class 9 Physics notes&quot;)">Best Class 9 Physics notes</button>
+        <button class="chip" onclick="chipQuery(&quot;Explain Newton's laws of motion&quot;)">Explain Newton's laws</button>
+        <button class="chip" onclick="chipQuery(&quot;What is photosynthesis&quot;)">What is photosynthesis?</button>
       </div>
       <div class="chatinputbar">
         <input id="chatInput" placeholder="Ask a doubt, search notes, or paste text to summarize..." onkeydown="if(event.key==='Enter') sendChat()">
@@ -2463,19 +2249,23 @@ function viewAssistant(){
 function renderChatLog(){
   const log = document.getElementById("chatlog");
   if(!log) return;
-  log.innerHTML = state.chat.map(m=>`<div class="msg ${m.role}">${m.text.replace(/\n/g,"<br>")}${m.resources?`<div style="margin-top:10px; display:flex; flex-direction:column; gap:6px;">${m.resources.map(r=>`<div onclick="nav('resource',{id:'${r.id}'})" style="cursor:pointer; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:8px 10px; font-size:12.5px;"><b>${r.title}</b><br><span class="muted">${r.aiScore}/100 · ${r.rating}★ · ${r.price} pts</span></div>`).join("")}</div>`:""}</div>`).join("");
+  const esc=v=>String(v??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  log.innerHTML = state.chat.map(m=>`<div class="msg ${m.role}">${esc(m.text).replace(/\n/g,"<br>")}${m.resources?`<div style="margin-top:10px; display:flex; flex-direction:column; gap:6px;">${m.resources.map(r=>`<div onclick="nav('resource',{id:'${r.id}'})" style="cursor:pointer; background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:8px 10px; font-size:12.5px;"><b>${esc(r.title)}</b><br><span class="muted">${esc(r.aiScore)}/100 · ${esc(r.rating)}★ · ${esc(r.price)} pts</span></div>`).join("")}</div>`:""}</div>`).join("");
   log.scrollTop = log.scrollHeight;
 }
 
 function viewFocus(){
   const f = state.focus;
   const pct = f.active? Math.min(100,(f.elapsed/(45*60000))*100) : 0;
-  const today = Math.round(f.log.filter(l=>l.date===new Date().toDateString()).reduce((a,b)=>a+(b.seconds!=null?b.seconds:b.minutes*60),0)/60);
-  const week = Math.round(f.log.slice(-7).reduce((a,b)=>a+(b.seconds!=null?b.seconds:b.minutes*60),0)/60);
-  const month = Math.round(f.log.reduce((a,b)=>a+(b.seconds!=null?b.seconds:b.minutes*60),0)/60);
-  const maxM = Math.max(...f.log.slice(-7).map(l=>l.seconds!=null?l.seconds/60:l.minutes),1);
+  const now = new Date();
+  const todayKey = now.toDateString();
+  const weekStart = new Date(now); weekStart.setHours(0,0,0,0); weekStart.setDate(weekStart.getDate()-6);
+  const today = f.log.filter(l=>l.date===todayKey).reduce((a,b)=>a+Number(b.minutes||0),0);
+  const week = f.log.filter(l=>{const d=new Date(l.date); d.setHours(0,0,0,0); return d>=weekStart && d<=now;}).reduce((a,b)=>a+Number(b.minutes||0),0);
+  const month = f.log.reduce((a,b)=>a+Number(b.minutes||0),0);
+  const maxM = Math.max(...f.log.slice(-7).map(l=>l.minutes),1);
   const bySubject = {};
-  f.log.forEach(l=>{ bySubject[l.subject]=(bySubject[l.subject]||0)+(l.seconds!=null?l.seconds/60:l.minutes); });
+  f.log.forEach(l=>{ bySubject[l.subject]=(bySubject[l.subject]||0)+l.minutes; });
   const subjectEntries = Object.entries(bySubject).sort((a,b)=>b[1]-a[1]);
   const maxSubjM = Math.max(...subjectEntries.map(e=>e[1]),1);
   return `${navBar()}<div class="pagewrap"><div class="wrap">
@@ -2504,7 +2294,7 @@ function viewFocus(){
           <h3 style="font-size:14px; margin-bottom:14px;">Recent sessions</h3>
           ${f.log.length? `<div style="display:flex; align-items:flex-end; gap:8px; height:120px;">
             ${f.log.slice(-7).map(l=>`<div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:6px; justify-content:flex-end; height:100%;">
-              <div style="width:100%; border-radius:6px 6px 0 0; background:linear-gradient(180deg,var(--violet),var(--cyan)); height:${Math.max(4,((l.seconds!=null?l.seconds/60:l.minutes)/maxM)*90)}px;"></div>
+              <div style="width:100%; border-radius:6px 6px 0 0; background:linear-gradient(180deg,var(--violet),var(--cyan)); height:${Math.max(4,(l.minutes/maxM)*90)}px;"></div>
               <div class="small muted" style="font-size:10px;">${l.date.slice(0,6)}</div>
             </div>`).join("")}
           </div>` : `<div class="empty" style="padding:30px 0;"><div class="ic">⏱️</div>No focus sessions logged yet. Start one to see your chart fill up.</div>`}
@@ -2765,7 +2555,7 @@ function viewAdmin(){
       <div class="field"><label>Accepted-answer bonus (points)</label><input type="number" value="${ADMIN_CONFIG.acceptedBonus}" onchange="updateConfig('acceptedBonus',this.value)"></div>
       <div class="field"><label>Reputation penalty (upheld report / rejection)</label><input type="number" value="${ADMIN_CONFIG.reportPenalty}" onchange="updateConfig('reportPenalty',this.value)"></div>
       <div class="field"><label>Max resource price (points)</label><input type="number" value="${ADMIN_CONFIG.maxResourcePrice}" onchange="updateConfig('maxResourcePrice',this.value)"></div>
-      <div class="field"><label>Minimum AI quality score to submit</label><input type="number" value="${ADMIN_CONFIG.autoApproveThreshold}" onchange="updateConfig('autoApproveThreshold',this.value)"></div>
+      <div class="field"><label>Auto-approve AI score threshold</label><input type="number" value="${ADMIN_CONFIG.autoApproveThreshold}" onchange="updateConfig('autoApproveThreshold',this.value)"></div>
       <div class="field"><label>Daily Reward Point earning cap (anti-abuse)</label><input type="number" value="${ADMIN_CONFIG.dailyPointCap}" onchange="updateConfig('dailyPointCap',this.value)"></div>
       <p class="small muted">These rules are live — changing a value here changes what students earn/pay from this point on.</p>
     </div>
@@ -2936,20 +2726,6 @@ function saveBio(){
 }
 window.saveBio = saveBio;
 
-function viewQuizLibrary(){
-  const u = state.user;
-  const owned = RESOURCES.filter(r=>r.status==="approved" && u?.purchased.includes(r.id));
-  const available = RESOURCES.filter(r=>r.status==="approved");
-  return `${navBar()}<div class="pagewrap"><div class="wrap" style="max-width:900px;">
-    <div class="section-title"><div><h2>Take a Quiz</h2><p class="muted small">Choose a resource and generate a quiz from its subject and topic.</p></div></div>
-    ${owned.length ? `<div class="section-title"><h3 style="font-size:15px;">Your purchased resources</h3></div><div class="grid cols-3">${owned.map(r=>`<div class="card card-hover">
-      <div class="meta" style="margin-bottom:8px;"><span class="tag tag-violet">${r.subject}</span><span class="tag tag-muted">Class ${r.class}</span></div>
-      <h4 style="margin-bottom:6px;">${r.title}</h4><p class="small muted" style="margin-bottom:12px;">${r.chapter} · ${r.pages} pages</p>
-      <button class="btn btn-primary btn-block btn-sm" onclick="nav('quizSetup',{id:'${r.id}'})">Create quiz</button>
-    </div>`).join("")}</div>` : `<div class="card empty"><div class="ic">📝</div>You don't have any purchased resources yet.<br><span class="small">Purchase a resource first, then come back here to quiz yourself.</span><br><button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="nav('marketplace')">Browse marketplace</button></div>`}
-  </div></div>${footer()}`;
-}
-
 function viewQuizSetup(id){
   const r = RESOURCES.find(x=>x.id===id);
   return `${navBar()}<div class="pagewrap"><div class="wrap" style="max-width:560px;">
@@ -3013,27 +2789,6 @@ function viewSearch(){
 }
 
 /* ---------------- MAIN RENDER ---------------- */
-async function hydrateResourceFile(id){
-  const r = RESOURCES.find(x=>x.id===id);
-  if(!r || !state.user) return;
-  const owned = state.user.purchased.includes(id) || r.creatorId === state.user._authUserId;
-  if(!owned) return;
-  const box = document.getElementById("resourceFile_"+id);
-  if(!box) return;
-  const url = await getResourceFileUrl(r);
-  if(!url){
-    box.innerHTML = '<div class="small muted">Could not open the uploaded notes. The file storage permissions need attention.</div>';
-    return;
-  }
-  const safeUrl = url.replace(/"/g,'&quot;');
-  box.innerHTML = (r.fileType||"").startsWith("image/")
-    ? `<img src="${safeUrl}" alt="Uploaded notes" style="max-width:100%; max-height:800px; object-fit:contain; border-radius:10px; display:block; margin:auto;">`
-      + `<div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;"><button class="btn btn-outline btn-sm" type="button" onclick="openResourceFile('${id}')">Open full size</button></div>`
-    : `<iframe src="${safeUrl}" title="Uploaded notes" style="width:100%; height:650px; border:0; border-radius:8px; background:#fff;"></iframe>`
-      + `<div style="margin-top:10px;"><button class="btn btn-outline btn-sm" type="button" onclick="openResourceFile('${id}')">Open / download PDF</button></div>`;
-}
-window.hydrateResourceFile = hydrateResourceFile;
-
 function render(){
   document.documentElement.setAttribute("data-theme", state.theme);
   const app = document.getElementById("app");
@@ -3060,7 +2815,6 @@ function render(){
     case "sellerResult": html = viewSellerResult(state.params.id); break;
     case "admin": html = viewAdmin(); break;
     case "profile": html = viewProfile(); break;
-    case "quizLibrary": html = viewQuizLibrary(); break;
     case "quizSetup": html = viewQuizSetup(state.params.id); break;
     case "quizTake": html = viewQuizTake(); break;
     case "quizResult": html = viewQuizResult(); break;
@@ -3069,9 +2823,6 @@ function render(){
   }
   app.innerHTML = (usingRealBackend? "" : `<div style="background:#7A2E2E; color:#fff; text-align:center; padding:8px 16px; font-size:12.5px; font-weight:600;">⚠️ Offline demo mode — Supabase isn't configured yet, so nothing will be saved permanently. See the setup instructions to connect a real backend.</div>`) + html;
   if(state.route==="assistant") renderChatLog();
-  if(state.route==="resource" && state.params?.id && usingRealBackend){
-    hydrateResourceFile(state.params.id);
-  }
   if(state.route==="focus" && state.facecamActive && facecamStream){
     const v = document.getElementById("facecamPreview");
     if(v) v.srcObject = facecamStream;
@@ -3096,27 +2847,13 @@ async function restoreSupabaseSession(){
     if(!profile){ console.error("Session restore: profile not found"); return false; }
 
     const acct = await fetchAccountData(authUser.id);
-    const authUsername = authUser.user_metadata?.username || "";
-    let kvSaved = null;
-    if(authUsername){
-      const rawSaved = await Store.get(userKey(authUsername));
-      if(rawSaved){
-        try{ kvSaved = JSON.parse(rawSaved); }catch(e){ console.warn("Saved profile data parse failed:", e); }
-      }
-    }
     const saved = {
-      ...(kvSaved || {}),
-      name: profile.name || kvSaved?.name || authUser.user_metadata?.name || authUser.email?.split("@")[0] || "User",
-      fullName: profile.name || kvSaved?.fullName || authUser.user_metadata?.full_name || authUser.user_metadata?.name || "User",
-      username: authUsername || kvSaved?.username || "",
-      class: profile.class ?? kvSaved?.class,
-      board: profile.board ?? kvSaved?.board,
-      accountType: profile.account_type || kvSaved?.accountType,
-      bio: profile.bio ?? kvSaved?.bio ?? "",
-      reputation: acct.reputation ?? kvSaved?.reputation,
-      points: acct.points ?? kvSaved?.points,
-      streak: acct.streak ?? kvSaved?.streak,
-      is_admin: profile.is_admin === true
+      name: profile.name || authUser.user_metadata?.name || authUser.email?.split("@")[0] || "User",
+      fullName: profile.name || authUser.user_metadata?.full_name || authUser.user_metadata?.name || "User",
+      username: authUser.user_metadata?.username || "",
+      class: profile.class, board: profile.board, accountType: profile.account_type,
+      bio: profile.bio || "", reputation: acct.reputation, points: acct.points,
+      streak: acct.streak, is_admin: profile.is_admin === true
     };
     const name = saved.name;
     const username = saved.username || name;
