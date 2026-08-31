@@ -74,11 +74,11 @@ button{font-family:inherit; cursor:pointer;}
 .navlinks button{background:none; border:none; color:var(--muted); padding:8px 12px; border-radius:8px; font-size:14px; font-weight:500; white-space:nowrap; transition:all .15s;}
 .navlinks button:hover{color:var(--text); background:var(--surface2);}
 .navlinks button.active{color:var(--text); background:var(--surface3); box-shadow:inset 0 0 0 1px var(--border2);}
-.navlinks{scrollbar-width:thin; scrollbar-color:var(--border2) transparent; scrollbar-gutter:stable;}
-.navlinks::-webkit-scrollbar{height:6px;}
-.navlinks::-webkit-scrollbar-track{background:transparent;}
-.navlinks::-webkit-scrollbar-thumb{background:var(--border2); border-radius:999px;}
-.navlinks::-webkit-scrollbar-thumb:hover{background:var(--violet2);}
+.navlinks{scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.22) transparent; scrollbar-gutter:stable; padding-bottom:2px;}
+.navlinks::-webkit-scrollbar{height:4px;}
+.navlinks::-webkit-scrollbar-track{background:transparent; margin:0 10px;}
+.navlinks::-webkit-scrollbar-thumb{background:linear-gradient(90deg,var(--violet2),var(--cyan)); border-radius:999px;}
+.navlinks::-webkit-scrollbar-thumb:hover{filter:brightness(1.15);}
 .navright{display:flex; align-items:center; gap:10px; flex-shrink:0;}
 .searchbox{display:flex; align-items:center; gap:6px; background:var(--surface2); border:1px solid var(--border); border-radius:20px; padding:6px 12px; width:180px;}
 .searchbox input{background:none; border:none; outline:none; color:var(--text); font-size:13px; width:100%;}
@@ -455,9 +455,9 @@ async function persistCatalog(){
 
 let _saveTimer = null;
 function scheduleSave(){
-  if(!state.user) return;
+  if(!state.user || usingRealBackend) return;
   clearTimeout(_saveTimer);
-  _saveTimer = setTimeout(()=>{ persistUser(); persistCatalog(); }, 600);
+  _saveTimer=setTimeout(()=>{persistUser();persistCatalog();},600);
 }
 
 async function loadAllUsers(){
@@ -585,6 +585,7 @@ const QUESTION_BANKS = {
    not a live model, so be upfront with students that it won't know
    everything. */
 const KNOWLEDGE_BASE = [
+  { keywords:["constraints of motion","rules of motion","motion and its rules","equations of motion","distance time speed","motion"], explanation:"Motion means a change in an object’s position with time. It is described using distance, displacement, speed, velocity and acceleration. For uniformly accelerated motion, common equations are v = u + at, s = ut + ½at², and v² = u² + 2as." },
   { keywords:["newton","force and law","laws of motion","inertia"], explanation:"Newton's three laws of motion: (1) An object stays at rest or in uniform motion unless acted on by an unbalanced force — this is inertia. (2) Force = mass × acceleration (F = ma). (3) For every action there's an equal and opposite reaction. Together they explain everything from why you jerk forward when a bus brakes to how rockets launch." },
   { keywords:["gravitation","gravity"], explanation:"Gravitation is the force of attraction between any two masses. Newton's law of gravitation says this force is proportional to the product of the two masses and inversely proportional to the square of the distance between them (F = Gm₁m₂/r²). It's why objects fall to the ground and why planets orbit the sun." },
   { keywords:["work and energy","kinetic energy","potential energy","work done"], explanation:"Work is done when a force moves an object through a distance (Work = Force × Displacement, in the direction of the force). Kinetic energy (½mv²) depends on motion; potential energy (mgh) depends on height/position. Energy changes form but the total is always conserved." },
@@ -660,7 +661,8 @@ const AIService = {
     // Intent 2: answer a conceptual doubt directly
     const looksLikeSearch = /class\s?\d|under\s?\d+|below\s?\d+|\d+\s?points?|cheapest|cheap notes|best rated|top rated|highest rat|compare/.test(q);
     const looksLikeQuestion = /^(what|why|how|explain|define|when|who|tell me about|help me|help|can you|could you|teach me|describe|difference between|compare)\b/.test(q) || q.endsWith("?") || /(can't understand|cannot understand|dont understand|don't understand|confused|stuck)/.test(q);
-    if(looksLikeQuestion && !looksLikeSearch){
+    const looksLikeKnowledgeTopic = KNOWLEDGE_BASE.some(k=>k.keywords.some(kw=>q.includes(kw)));
+    if((looksLikeQuestion || looksLikeKnowledgeTopic) && !looksLikeSearch){
       const explanation = AIService.explainDoubt(q);
       if(explanation) return {text:`${explanation}\n\nWant me to also find notes on this topic, or generate a quick quiz to test yourself?`, resources:[]};
       return {text:"I don't have a ready explanation for that specific one — try posting it on the Doubts board so another student can help, or ask me about a named topic (e.g. \"explain trigonometry\" or \"what is Newton's second law\").", resources:[]};
@@ -810,10 +812,12 @@ async function refreshAuthoritativeAccount(){
 }
 
 function focusStorageKey(){ return "vidyaloop:focus:"+(state.user?._authUserId || state.user?.id || "guest"); }
-function loadLocalFocusLog(fallback=[]){
-  try{ const raw=localStorage.getItem(focusStorageKey()); const parsed=raw?JSON.parse(raw):null; return Array.isArray(parsed)?parsed:(Array.isArray(fallback)?fallback:[]); }catch(e){ return Array.isArray(fallback)?fallback:[]; }
-}
-function saveLocalFocusLog(){ try{ localStorage.setItem(focusStorageKey(), JSON.stringify(state.focus.log||[])); }catch(e){} }
+function loadFocusState(){ try{ const raw=localStorage.getItem(focusStorageKey()); const p=raw?JSON.parse(raw):{}; const legacy=Array.isArray(p)?p:[]; return {log:Array.isArray(p.log)?p.log:legacy,active:Array.isArray(p)?false:!!p.active,paused:Array.isArray(p)?false:!!p.paused,startedAt:Array.isArray(p)?null:Number(p.startedAt)||null,elapsed:Array.isArray(p)?0:Number(p.elapsed)||0,subject:Array.isArray(p)?"":(p.subject||"")}; }catch(e){ return {log:[],active:false,paused:false,startedAt:null,elapsed:0,subject:""}; } }
+function normalizeFocusLog(log){ return (Array.isArray(log)?log:[]).map(l=>{ let d=new Date(l.date); if(Number.isNaN(d.getTime())) d=new Date(); const m=Number(l.minutes); return {date:d.toDateString(),minutes:Number.isFinite(m)?Math.max(0,m):0,subject:l.subject||"General"}; }).filter(l=>l.minutes>0); }
+function saveFocusState(){ if(!state.user)return; try{ localStorage.setItem(focusStorageKey(),JSON.stringify({log:normalizeFocusLog(state.focus.log),active:!!state.focus.active,paused:!!state.focus.paused,startedAt:state.focus.startedAt,elapsed:Number(state.focus.elapsed)||0,subject:state.focus.subject||""})); }catch(e){} }
+function loadLocalFocusLog(fallback=[]){ const saved=loadFocusState(); return normalizeFocusLog(saved.log.length?saved.log:fallback); }
+function saveLocalFocusLog(){ saveFocusState(); }
+function restoreFocusSession(fallback=[]){ if(!state.user)return; const saved=loadFocusState(); state.focus.log=normalizeFocusLog(saved.log.length?saved.log:fallback); state.focus.active=saved.active; state.focus.paused=saved.paused; state.focus.startedAt=saved.startedAt; state.focus.elapsed=saved.elapsed; state.focus.subject=saved.subject||""; clearInterval(state.focus.timer); if(state.focus.active&&!state.focus.paused&&state.focus.startedAt){ state.focus.elapsed=Math.max(0,Date.now()-state.focus.startedAt); state.focus.timer=setInterval(()=>{state.focus.elapsed=Math.max(0,Date.now()-state.focus.startedAt);saveFocusState();renderFocusTimerOnly();},1000); } }
 
 function establishSession(name, cls, board, saved, isOwner, loginMeta, accountType){
   state.user = {
@@ -833,17 +837,18 @@ function establishSession(name, cls, board, saved, isOwner, loginMeta, accountTy
     _authUserId: loginMeta.authUserId || null
   };
   state.transactions = saved?.transactions || [{id:uid("tx"), reason:"Welcome bonus", amount:50, ts:Date.now(), balance:50}];
-  state.focus.log = loadLocalFocusLog(saved?.focusLog || []);
+  restoreFocusSession(saved?.focusLog || []);
   state.subscription = null; // no subscriptions table in this schema — Premium/promo UI stays but is inert
   state.notifications = [{id:uid("n"), title: saved? "Welcome back 👋" : "Welcome to VidyaLoop 👋", desc: saved? "Your stats and progress are right where you left them." : "Start by exploring the marketplace or asking a doubt.", ts:Date.now(), read:false}];
   nav(state.user.accountType==="store_owner" ? "storeDashboard" : "dashboard");
   toast(isOwner? "Logged in as "+state.user.name+" (Owner)" : "Logged in as "+state.user.name);
-  persistUser();
+  if(!usingRealBackend) persistUser();
   if(usingRealBackend) setTimeout(()=>refreshAuthoritativeAccount(), 0);
   if(state.user.accountType==="store_owner") loadMyStore();
   if(usingRealBackend){
     loadPointTransactions();
     loadResourcesFromDB();
+    loadPurchasedResourcesFromDB();
     loadDoubtsFromDB();
   }
 }
@@ -859,6 +864,8 @@ async function loadPointTransactions(){
   render();
 }
 window.loadPointTransactions = loadPointTransactions;
+async function loadPurchasedResourcesFromDB(){ if(!usingRealBackend||!state.user?._authUserId)return; const {data,error}=await sb.from("resource_purchases").select("resource_id").eq("user_id",state.user._authUserId); if(error){console.error("loadPurchasedResourcesFromDB failed:",error);return;} state.user.purchased=[...new Set((data||[]).map(x=>x.resource_id).filter(Boolean))]; render(); }
+window.loadPurchasedResourcesFromDB=loadPurchasedResourcesFromDB;
 
 /* Resources: Supabase is the source of truth. RESOURCES stays as an
    in-memory cache that view functions read from, but it's populated by
@@ -1093,7 +1100,7 @@ async function purchase(resId){
     const { error: purchaseErr } = await sb.from("resource_purchases").insert({ resource_id:resId, user_id:u._authUserId });
     if(purchaseErr){ console.error("resource_purchases insert failed:", purchaseErr); }
     await sb.from("resources").update({ purchases: (r.purchases||0)+1 }).eq("id", resId);
-    u.points -= r.price;
+    const acct=await fetchAccountData(u._authUserId); if(Number.isFinite(Number(acct.points))) u.points=Number(acct.points);
   } else {
     u.points -= r.price;
     addTx("Purchased: "+r.title, -r.price);
@@ -1114,7 +1121,7 @@ async function redeemProduct(prodId){
   if(usingRealBackend){
     const { data, error } = await sb.rpc("spend_reward_points", { target_user_id:u._authUserId, point_amount:p.cost, point_reason:"Redeemed: "+p.name });
     if(error || data!==true){ toast("Redemption failed — points could not be deducted."); return; }
-    u.points -= p.cost;
+    const acct=await fetchAccountData(u._authUserId); if(Number.isFinite(Number(acct.points))) u.points=Number(acct.points);
     loadPointTransactions();
   } else {
     u.points -= p.cost;
@@ -1461,7 +1468,7 @@ async function submitAnswer(doubtId){
     d.answers.push({ id:data.id, author:state.user.name, authorId:state.user._authUserId, body, helpful:0, notHelpful:0, accepted:false, createdAt:new Date(data.created_at).getTime() });
     state.user.answeredIds.push(doubtId);
     const { data: granted, error: rpcErr } = await sb.rpc("add_reward_points", { target_user_id: state.user._authUserId, point_amount: ADMIN_CONFIG.answerReward, point_reason: "Answered a doubt" });
-    if(!rpcErr){ state.user.points += ADMIN_CONFIG.answerReward; state.user.reputation += 2; notify("Points earned", "+"+ADMIN_CONFIG.answerReward+" points for answering a doubt."); loadPointTransactions(); }
+    if(!rpcErr){ const acct=await fetchAccountData(state.user._authUserId); if(Number.isFinite(Number(acct.points))) state.user.points=Number(acct.points); state.user.reputation += 2; notify("Points earned", "+"+ADMIN_CONFIG.answerReward+" points for answering a doubt."); loadPointTransactions(); }
     render();
     return;
   }
@@ -1484,7 +1491,7 @@ async function acceptAnswer(doubtId, ansId){
     if(answer.authorId){
       const { error } = await sb.rpc("add_reward_points", { target_user_id: answer.authorId, point_amount: ADMIN_CONFIG.acceptedBonus, point_reason: "Answer accepted" });
       if(!error){
-        if(answer.authorId === state.user._authUserId){ state.user.points += ADMIN_CONFIG.acceptedBonus; state.user.reputation += 5; loadPointTransactions(); }
+        if(answer.authorId === state.user._authUserId){ const acct=await fetchAccountData(state.user._authUserId); if(Number.isFinite(Number(acct.points))) state.user.points=Number(acct.points); state.user.reputation += 5; loadPointTransactions(); }
         notify("Answer accepted!", "The answerer received +"+ADMIN_CONFIG.acceptedBonus+" points.");
       }
       // Note: crediting the ANSWERER's reputation (when it isn't your own) has
@@ -1542,46 +1549,16 @@ function chipQuery(q){ document.getElementById("chatInput").value=q; sendChat();
 window.chipQuery = chipQuery;
 
 /* Focus mode */
-function startFocus(subject){
-  state.focus.active = true; state.focus.paused=false; state.focus.startedAt = Date.now(); state.focus.elapsed = 0; state.focus.subject = subject||"General";
-  clearInterval(state.focus.timer);
-  state.focus.timer = setInterval(()=>{ state.focus.elapsed = Date.now()-state.focus.startedAt; renderFocusTimerOnly(); }, 1000);
-  render();
-}
-window.startFocus = startFocus;
-function pauseFocus(){
-  if(!state.focus.active || state.focus.paused) return;
-  clearInterval(state.focus.timer);
-  state.focus.paused = true;
-  render();
-}
-window.pauseFocus = pauseFocus;
-function resumeFocus(){
-  if(!state.focus.active || !state.focus.paused) return;
-  state.focus.paused = false;
-  state.focus.startedAt = Date.now() - state.focus.elapsed;
-  state.focus.timer = setInterval(()=>{ state.focus.elapsed = Date.now()-state.focus.startedAt; renderFocusTimerOnly(); }, 1000);
-  render();
-}
-window.resumeFocus = resumeFocus;
-function endFocus(){
-  clearInterval(state.focus.timer);
-  const mins = Math.round(state.focus.elapsed/60000);
-  if(mins>0){
-    state.focus.log.push({date:new Date().toDateString(), minutes:mins, subject:state.focus.subject});
-    saveLocalFocusLog();
-    persistUser();
-    notify("Focus session logged", mins+" minutes of "+state.focus.subject+" recorded.");
-  }
-  state.focus.active=false; state.focus.paused=false; state.focus.elapsed=0;
-  render();
-}
-window.endFocus = endFocus;
-function resetFocusSession(reasonMsg){
-  clearInterval(state.focus.timer);
-  state.focus.active=false; state.focus.paused=false; state.focus.elapsed=0;
-  if(reasonMsg) notify("Focus session reset", reasonMsg);
-}
+function startFocus(subject){ state.focus.active=true; state.focus.paused=false; state.focus.subject=subject||"General"; state.focus.startedAt=Date.now(); state.focus.elapsed=0; clearInterval(state.focus.timer); saveFocusState(); state.focus.timer=setInterval(()=>{state.focus.elapsed=Math.max(0,Date.now()-state.focus.startedAt);saveFocusState();renderFocusTimerOnly();},1000); render(); }
+window.startFocus=startFocus;
+function pauseFocus(){ if(!state.focus.active||state.focus.paused)return; state.focus.elapsed=Math.max(0,Date.now()-state.focus.startedAt); clearInterval(state.focus.timer); state.focus.paused=true; saveFocusState(); render(); }
+window.pauseFocus=pauseFocus;
+function resumeFocus(){ if(!state.focus.active||!state.focus.paused)return; state.focus.paused=false; state.focus.startedAt=Date.now()-state.focus.elapsed; clearInterval(state.focus.timer); saveFocusState(); state.focus.timer=setInterval(()=>{state.focus.elapsed=Math.max(0,Date.now()-state.focus.startedAt);saveFocusState();renderFocusTimerOnly();},1000); render(); }
+window.resumeFocus=resumeFocus;
+function endFocus(){ if(!state.focus.active)return; if(!state.focus.paused&&state.focus.startedAt)state.focus.elapsed=Math.max(0,Date.now()-state.focus.startedAt); clearInterval(state.focus.timer); const mins=Math.max(1,Math.round((Number(state.focus.elapsed)||0)/60000)); state.focus.log=normalizeFocusLog(state.focus.log); state.focus.log.push({date:new Date().toDateString(),minutes:mins,subject:state.focus.subject||"General"}); state.focus.active=false;state.focus.paused=false;state.focus.startedAt=null;state.focus.elapsed=0;saveFocusState();notify("Focus session logged",mins+" minute"+(mins===1?"":"s")+" of "+(state.focus.subject||"General")+" recorded.");render(); }
+window.endFocus=endFocus;
+function resetFocusSession(reasonMsg){ clearInterval(state.focus.timer); state.focus.active=false; state.focus.paused=false; state.focus.startedAt=null; state.focus.elapsed=0; saveFocusState(); if(reasonMsg)notify("Focus session reset",reasonMsg); }
+window.resetFocusSession=resetFocusSession;
 
 /* ---------------- FACECAM RECORDING ----------------
    Everything here stays 100% local to the student's own browser.
@@ -1637,6 +1614,7 @@ window.stopFacecam = stopFacecam;
 
 document.addEventListener("visibilitychange", ()=>{
   if(document.hidden && state.focus.active){
+    saveFocusState();
     resetFocusSession("You left the tab, so the session wasn't counted. Stay on VidyaLoop to keep your timer running.");
     if(state.route==="focus") render();
   }
@@ -2023,7 +2001,7 @@ function viewDashboard(){
     <div class="grid cols-4" style="margin-bottom:22px;">
       <div class="card statbig"><div class="ic" style="background:rgba(139,92,246,.15); color:var(--violet2);">✦</div><div><div class="n">${u.points}</div><div class="l">Reward Points</div></div></div>
       <div class="card statbig"><div class="ic" style="background:rgba(34,211,238,.15); color:var(--cyan);">⬤</div><div><div class="n">${u.reputation}</div><div class="l">Reputation Score</div></div></div>
-      <div class="card statbig"><div class="ic" style="background:rgba(255,176,32,.15); color:var(--amber);">⏱️</div><div><div class="n">${state.focus.log.filter(l=>l.date===new Date().toDateString()).reduce((a,b)=>a+b.minutes,0)}m</div><div class="l">Focus time today</div></div></div>
+      <div class="card statbig"><div class="ic" style="background:rgba(255,176,32,.15); color:var(--amber);">⏱️</div><div><div class="n">${state.focus.log.filter(l=>new Date(l.date).toDateString()===new Date().toDateString()).reduce((a,b)=>a+Number(b.minutes||0),0)+Math.floor((state.focus.active?state.focus.elapsed:0)/60000)}m</div><div class="l">Focus time today</div></div></div>
       <div class="card statbig"><div class="ic" style="background:rgba(52,211,153,.15); color:var(--green);">🏅</div><div><div class="n">${u.level}</div><div class="l">${u.badges.length} badges earned</div></div></div>
     </div>
     <div class="section-title"><h2>Quick actions</h2></div>
@@ -2257,15 +2235,18 @@ function renderChatLog(){
 function viewFocus(){
   const f = state.focus;
   const pct = f.active? Math.min(100,(f.elapsed/(45*60000))*100) : 0;
-  const now = new Date();
-  const todayKey = now.toDateString();
-  const weekStart = new Date(now); weekStart.setHours(0,0,0,0); weekStart.setDate(weekStart.getDate()-6);
-  const today = f.log.filter(l=>l.date===todayKey).reduce((a,b)=>a+Number(b.minutes||0),0);
-  const week = f.log.filter(l=>{const d=new Date(l.date); d.setHours(0,0,0,0); return d>=weekStart && d<=now;}).reduce((a,b)=>a+Number(b.minutes||0),0);
-  const month = f.log.reduce((a,b)=>a+Number(b.minutes||0),0);
-  const maxM = Math.max(...f.log.slice(-7).map(l=>l.minutes),1);
-  const bySubject = {};
-  f.log.forEach(l=>{ bySubject[l.subject]=(bySubject[l.subject]||0)+l.minutes; });
+  const now=new Date();
+  f.log=normalizeFocusLog(f.log);
+  const todayKey=now.toDateString();
+  const startOfToday=new Date(now); startOfToday.setHours(0,0,0,0);
+  const weekStart=new Date(startOfToday); weekStart.setDate(weekStart.getDate()-6);
+  const liveMinutes=state.focus.active?Math.floor((Number(state.focus.elapsed)||0)/60000):0;
+  const today=f.log.filter(l=>new Date(l.date).toDateString()===todayKey).reduce((a,b)=>a+Number(b.minutes||0),0)+liveMinutes;
+  const week=f.log.filter(l=>{const d=new Date(l.date);d.setHours(0,0,0,0);return d>=weekStart&&d<=startOfToday;}).reduce((a,b)=>a+Number(b.minutes||0),0)+liveMinutes;
+  const total=f.log.reduce((a,b)=>a+Number(b.minutes||0),0)+liveMinutes;
+  const maxM=Math.max(...f.log.slice(-7).map(l=>Number(l.minutes)||0),1);
+  const bySubject={};
+  f.log.forEach(l=>{bySubject[l.subject]=(bySubject[l.subject]||0)+Number(l.minutes||0);});
   const subjectEntries = Object.entries(bySubject).sort((a,b)=>b[1]-a[1]);
   const maxSubjM = Math.max(...subjectEntries.map(e=>e[1]),1);
   return `${navBar()}<div class="pagewrap"><div class="wrap">
@@ -2288,7 +2269,7 @@ function viewFocus(){
         <div class="grid cols-3" style="margin-bottom:16px;">
           <div class="card" style="text-align:center;"><div class="mono" style="font-size:20px; font-weight:700;">${today}m</div><div class="small muted">Today</div></div>
           <div class="card" style="text-align:center;"><div class="mono" style="font-size:20px; font-weight:700;">${week}m</div><div class="small muted">Last 7 days</div></div>
-          <div class="card" style="text-align:center;"><div class="mono" style="font-size:20px; font-weight:700;">${month}m</div><div class="small muted">Total logged</div></div>
+          <div class="card" style="text-align:center;"><div class="mono" style="font-size:20px; font-weight:700;">${total}m</div><div class="small muted">Total logged</div></div>
         </div>
         <div class="card">
           <h3 style="font-size:14px; margin-bottom:14px;">Recent sessions</h3>
