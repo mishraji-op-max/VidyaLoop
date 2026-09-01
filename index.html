@@ -1058,25 +1058,88 @@ async function purchase(resId){
   const r = RESOURCES.find(x=>x.id===resId);
   const u = state.user;
   if(!u) return nav("login");
+  if(!r) return toast("Resource not found.");
   if(r.creatorId===u.id) return toast("You can't purchase your own resource.");
   if(u.purchased.includes(resId)) return toast("Already in your library.");
-  if(u.points < r.price) return toast("Not enough Reward Points.");
+  const price = Number(r.price);
+  if(!Number.isFinite(price) || price <= 0) return toast("This resource has an invalid price.");
   if(usingRealBackend){
-    const { data: already } = await sb.from("resource_purchases").select("id").eq("resource_id",resId).eq("user_id",u._authUserId).maybeSingle();
+    if(!u._authUserId){
+      console.error("Purchase failed: missing authenticated user id", u);
+      toast("Purchase failed — please sign in again.");
+      return;
+    }
+
+    // Always use the server-side RP balance, not the possibly stale frontend value.
+    const { data: rp, error: rpLoadError } = await sb.from("reward_points")
+      .select("balance").eq("user_id",u._authUserId).maybeSingle();
+    if(rpLoadError){
+      console.error("Purchase RP balance lookup failed:", rpLoadError);
+      toast("Purchase failed — couldn't check your Reward Points.");
+      return;
+    }
+    if(!rp || Number(rp.balance) < price){
+      u.points = Number(rp?.balance ?? 0);
+      render();
+      toast("Not enough Reward Points.");
+      return;
+    }
+
+    const { data: already, error: alreadyError } = await sb.from("resource_purchases")
+      .select("id").eq("resource_id",resId).eq("user_id",u._authUserId).maybeSingle();
+    if(alreadyError){
+      console.error("Purchase ownership check failed:", alreadyError);
+      toast("Purchase failed — couldn't verify the resource.");
+      return;
+    }
     if(already) return toast("Already in your library.");
-    const { data, error } = await sb.rpc("spend_reward_points", { target_user_id:u._authUserId, point_amount:r.price, point_reason:"Purchased: "+r.title });
-    if(error || data === null || data === undefined){ console.error("Purchase RP deduction failed:", error); toast("Purchase failed — points could not be deducted."); return; }
-    const { error: purchaseErr } = await sb.from("resource_purchases").insert({ resource_id:resId, user_id:u._authUserId });
-    if(purchaseErr){ console.error("resource_purchases insert failed:", purchaseErr); }
+
+    const { data: newBalance, error: spendError } = await sb.rpc("spend_reward_points", {
+      target_user_id:u._authUserId,
+      point_amount:price,
+      point_reason:"Purchased: "+r.title
+    });
+    if(spendError || newBalance === null || newBalance === undefined){
+      console.error("Purchase RP deduction failed:", spendError, { newBalance, userId:u._authUserId, price });
+      toast("Purchase failed — points could not be deducted.");
+      return;
+    }
+
+    // The RPC returns the NEW numeric balance. Do not compare it with true.
+    u.points = Number(newBalance);
+
+    const { error: purchaseErr } = await sb.from("resource_purchases")
+      .insert({ resource_id:resId, user_id:u._authUserId });
+    if(purchaseErr){
+      console.error("resource_purchases insert failed after RP deduction:", purchaseErr);
+      // Try to roll the RP deduction back so a failed library insert doesn't cost the user points.
+      try{
+        await sb.rpc("add_reward_points", {
+          target_user_id:u._authUserId,
+          point_amount:price,
+          point_reason:"Refund: failed purchase of "+r.title
+        });
+      }catch(refundError){ console.error("Purchase refund failed:", refundError); }
+      await loadPointTransactions();
+      toast("Purchase failed — the resource could not be added to your library.");
+      return;
+    }
+
     await sb.from("resources").update({ purchases: (r.purchases||0)+1 }).eq("id", resId);
-    u.points -= r.price;
+    u.points = Number(newBalance);
+    u.purchased.push(resId);
+    r.purchases = (r.purchases||0) + 1;
+    await loadPointTransactions();
+    notify("Purchase complete", r.title+" added to your library.");
+    render();
+    return;
   } else {
-    u.points -= r.price;
-    addTx("Purchased: "+r.title, -r.price);
+    if(u.points < price) return toast("Not enough Reward Points.");
+    u.points -= price;
+    addTx("Purchased: "+r.title, -price);
   }
   u.purchased.push(resId);
-  r.purchases += 1;
-  if(usingRealBackend) loadPointTransactions();
+  r.purchases = (r.purchases||0) + 1;
   notify("Purchase complete", r.title+" added to your library.");
   render();
 }
