@@ -40,14 +40,15 @@ h1,h2,h3,h4,.display{font-family:'Space Grotesk',sans-serif; letter-spacing:-0.0
 a{color:inherit; text-decoration:none;}
 button{font-family:inherit; cursor:pointer;}
 ::selection{background:var(--violet); color:#fff;}
-
-/* ---------- Clean custom scrollbars ---------- */
-html{scrollbar-width:thin; scrollbar-color:var(--border2) transparent;}
-::-webkit-scrollbar{width:9px; height:9px;}
+/* ---------- Clean custom scrollbar ---------- */
+*{scrollbar-width:thin; scrollbar-color:rgba(139,92,246,.55) transparent;}
+::-webkit-scrollbar{width:9px;height:9px;}
 ::-webkit-scrollbar-track{background:transparent;}
-::-webkit-scrollbar-thumb{background:linear-gradient(180deg,var(--border2),var(--violet)); border-radius:999px; border:2px solid transparent; background-clip:padding-box;}
-::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,var(--violet),var(--cyan)); border:2px solid transparent; background-clip:padding-box;}
-::-webkit-scrollbar-corner{background:transparent;}
+::-webkit-scrollbar-thumb{background:linear-gradient(180deg,var(--violet),var(--cyan));border-radius:999px;border:2px solid transparent;background-clip:padding-box;}
+::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,var(--violet),var(--pink));background-clip:padding-box;}
+.navlinks{scrollbar-width:none;}
+.navlinks::-webkit-scrollbar{display:none;}
+
 
 /* ---------- Neon background ---------- */
 #neonbg{position:fixed; inset:0; z-index:0; overflow:hidden; pointer-events:none;}
@@ -390,6 +391,33 @@ async function uploadFileToStorage(resId, file){
   const { data } = sb.storage.from("resources").getPublicUrl(path);
   return data.publicUrl;
 }
+async function getResourceFileUrl(r){
+  if(!usingRealBackend || !r?.hasFile || !r?.fileName || !r?.id) return r?.fileUrl || null;
+
+  // Prefer a short-lived signed URL. This works when the resources bucket is
+  // private and does not expose paid notes publicly.
+  const path = r.id + "/" + r.fileName;
+  try{
+    const { data, error } = await sb.storage.from("resources").createSignedUrl(path, 3600);
+    if(!error && data?.signedUrl) return data.signedUrl;
+  }catch(e){
+    console.warn("Signed resource URL failed:", e);
+  }
+
+  // Fall back to the stored public URL for installations where the bucket is public.
+  return r.fileUrl || null;
+}
+
+async function openResourceFile(id){
+  const r = RESOURCES.find(x=>x.id===id);
+  if(!r) return toast("Resource not found.");
+  if(!r.hasFile || !r.fileName) return toast("This resource has no uploaded file.");
+  const url = await getResourceFileUrl(r);
+  if(!url) return toast("Couldn't open the uploaded notes.");
+  window.open(url, "_blank", "noopener");
+}
+window.openResourceFile = openResourceFile;
+
 async function uploadStoreLogo(storeId, file){
   if(!usingRealBackend || !file) return null;
   const path = storeId+"/"+file.name;
@@ -427,7 +455,10 @@ async function persistUser(){
   const u = state.user;
   const record = {
     name:u.name, fullName:u.fullName || u.name, username:u.username || u.name, class:u.class, board:u.board, bio:u.bio,
-    ...(usingRealBackend ? {} : {points:u.points}), reputation:u.reputation, level:u.level, badges:u.badges,
+    // In real-backend mode, Reward Points live only in Supabase. Never write a
+    // stale frontend points value back into the KV account record.
+    ...(usingRealBackend ? {} : {points:u.points}),
+    reputation:u.reputation, level:u.level, badges:u.badges,
     uploaded:u.uploaded, purchased:u.purchased, saved:u.saved, asked:u.asked, answeredIds:u.answeredIds,
     ratedResources:u.ratedResources, redeemed:u.redeemed, recentlyViewed:u.recentlyViewed,
     quizHistory:u.quizHistory, streak:u.streak, joinDate:u.joinDate,
@@ -648,29 +679,39 @@ const AIService = {
     const rawQ = query.trim();
     const q = rawQ.toLowerCase();
 
-    // Intent 1: summarize/explain a pasted passage
+    // Intent 1: summarize/explain pasted material
     const explicitSummarize = /^(summarize|summarise|explain this|tldr|tl;dr)[:\s]/i.test(rawQ);
     const looksLikePastedContent = rawQ.split(/\s+/).length > 45;
     if(explicitSummarize || looksLikePastedContent){
       const content = rawQ.replace(/^(summarize|summarise|explain this|tldr|tl;dr)[:\s]*/i,'');
-      if(content.split(/\s+/).length < 15){
-        return {text:"Paste a longer passage (a paragraph or more) and I'll summarize and explain the key points for you.", resources:[]};
-      }
+      if(content.split(/\s+/).length < 15) return {text:"Paste a longer passage and I'll turn it into concise study notes.", resources:[]};
       const summary = AIService.summarize(content);
-      return {text:`Here's a summary of what you shared:\n\n${summary}\n\nWant me to explain a specific part further, or generate a quick quiz from it?`, resources:[]};
+      return {text:`Study notes from what you shared:\n\n${summary}\n\nI can also help turn this into revision points or a quiz.`, resources:[]};
     }
 
-    // Intent 2: answer a conceptual doubt directly
-    const looksLikeSearch = /class\s?\d|under\s?\d+|below\s?\d+|\d+\s?points?|cheapest|cheap notes|best rated|top rated|highest rat|compare/.test(q);
-    const looksLikeQuestion = /^(what|why|how|explain|define|when|who|tell me about)\b/.test(q) || q.endsWith("?");
+    // Intent 2: explicitly ask to derive/make notes
+    const wantsNotes = /\b(make|create|derive|prepare|give|generate|write)\b.*\b(notes|revision notes|study notes|summary|cheat sheet)\b/i.test(rawQ)
+      || /\bnotes\s+(on|for|about)\b/i.test(rawQ);
+    if(wantsNotes){
+      const match = KNOWLEDGE_BASE.find(k=>k.keywords.some(kw=>q.includes(kw)));
+      if(match){
+        const title = match.keywords[0].replace(/\b\w/g,c=>c.toUpperCase());
+        return {text:`Quick revision notes — ${title}\n\n${match.explanation}\n\nKey points to remember:\n• Learn the definition and main idea.\n• Note the important formula, relationship or example.\n• Practise one or two questions on the topic.`, resources:[]};
+      }
+      return {text:"I can turn a topic into concise revision notes when it matches my built-in study topics. Try a specific topic such as 'make notes on gravitation' or paste your own notes and I'll condense them.", resources:[]};
+    }
+
+    // Intent 3: direct doubt answering
+    const looksLikeSearch = /class\s?\d|under\s?\d+|below\s?\d+|\d+\s?points?|cheapest|cheap notes|best rated|top rated|highest rat|compare|find|search|notes?\b/.test(q);
+    const looksLikeQuestion = /^(what|why|how|explain|define|when|who|where|which|tell me|is|are|can|does|do|difference between)\b/.test(q) || q.endsWith("?");
     if(looksLikeQuestion && !looksLikeSearch){
       const explanation = AIService.explainDoubt(q);
-      if(explanation) return {text:`${explanation}\n\nWant me to also find notes on this topic, or generate a quick quiz to test yourself?`, resources:[]};
-      return {text:"I don't have a ready explanation for that specific one — try posting it on the Doubts board so another student can help, or ask me about a named topic (e.g. \"explain trigonometry\" or \"what is Newton's second law\").", resources:[]};
+      if(explanation) return {text:`${explanation}\n\nIf you want, ask me to make revision notes on this topic or find related notes on VidyaLoop.`, resources:[]};
+      return {text:"I couldn't confidently answer that from my built-in study knowledge. Try rephrasing the doubt with the exact topic/chapter, or post it on the Doubts board so another student can help.", resources:[]};
     }
 
-    // Intent 3: fall back to marketplace resource recommendations
-    let pool = RESOURCES.slice();
+    // Intent 4: find/search resources
+    let pool = RESOURCES.filter(r=>r.status==="approved");
     let note = "";
     const subjMatch = SUBJECTS.find(s=>q.includes(s.toLowerCase()));
     if(subjMatch){ pool = pool.filter(r=>r.subject===subjMatch); note+=` in ${subjMatch}`; }
@@ -678,18 +719,20 @@ const AIService = {
     if(clsMatch){ const c=Number(clsMatch[1]); pool=pool.filter(r=>r.class===c); note+=` for Class ${c}`; }
     const underMatch = q.match(/under\s?(\d+)|below\s?(\d+)|(\d+)\s?points?/);
     if(underMatch){ const n=Number(underMatch[1]||underMatch[2]||underMatch[3]); if(n){ pool=pool.filter(r=>r.price<=n); note+=` under ${n} points`; } }
-    if(q.includes("highest rat") || q.includes("best rated") || q.includes("top rated")){
-      pool = pool.sort((a,b)=>b.rating-a.rating);
-    } else if(q.includes("cheap")){
-      pool = pool.sort((a,b)=>a.price-b.price);
-    } else {
-      pool = pool.sort((a,b)=>b.aiScore-a.aiScore);
+    const topicWords = ["chapter","topic","revision","notes","study guide","worksheet","practice"].filter(w=>q.includes(w));
+    if(topicWords.length){
+      const terms=q.replace(/[^a-z0-9 ]/g," ").split(/\s+/).filter(w=>w.length>3 && !["find","best","notes","note","under","below","class","give","show","me","for","with","from","search","study","guide"].includes(w));
+      const topicPool=pool.filter(r=>terms.some(t=>(r.title+" "+r.chapter+" "+r.description).toLowerCase().includes(t)));
+      if(topicPool.length) pool=topicPool;
     }
-    pool = pool.slice(0,3);
-    if(!pool.length) return {text:`I couldn't find resources matching that${note}. Try broadening the class, subject or budget — or if nothing's been uploaded for this topic yet, be the first to upload one!`, resources:[]};
-    const top = pool[0];
-    let text = `Here's what I'd recommend${note || " overall"}:\n\nTop pick: ${top.title}\nAI score: ${top.aiScore}/100 · Rating: ${top.rating}/5 · Price: ${top.price} pts\nWhy: ${top.pros[0]?.toLowerCase()||"solid coverage"}${top.pros[1]?", "+top.pros[1].toLowerCase():""}.\nWorth noting: ${top.cons[0]?.toLowerCase()||"no major drawbacks flagged"}.`;
-    if(pool.length>1) text += `\n\nI also found ${pool.length-1} more option${pool.length>2?"s":""} below — ask me to compare them if you'd like.`;
+    if(q.includes("highest rat") || q.includes("best rated") || q.includes("top rated")) pool=pool.sort((a,b)=>b.rating-a.rating);
+    else if(q.includes("cheap") || q.includes("lowest")) pool=pool.sort((a,b)=>a.price-b.price);
+    else pool=pool.sort((a,b)=>b.aiScore-a.aiScore);
+    pool=pool.slice(0,3);
+    if(!pool.length) return {text:`I couldn't find resources matching that${note}. Try a broader subject, class or budget, or upload the first resource for that topic.`, resources:[]};
+    const top=pool[0];
+    let text=`Here's what I found${note || ""}:\n\nTop pick: ${top.title}\nAI score: ${top.aiScore}/100 · Rating: ${top.rating}/5 · Price: ${top.price} pts\nTopic: ${top.chapter}\nWhy: ${top.pros[0]?.toLowerCase()||"good topic coverage"}.`;
+    if(pool.length>1) text+=`\n\nI also found ${pool.length-1} more option${pool.length>2?"s":""}. Ask me to compare them.`;
     return {text, resources:pool};
   },
   generateQuiz(resource, count){
@@ -735,7 +778,7 @@ const ADMIN_CONFIG = {
   reportPenalty: 8,
   notHelpfulPenalty: 3,
   maxResourcePrice: 150,
-  autoApproveThreshold: 70,
+  autoApproveThreshold: 20,
   dailyPointCap: 40
 };
 function localStorageGet(){ return null; } // no persistent storage in this sandbox demo
@@ -788,7 +831,13 @@ function nav(route, params={}){
     stopFacecam();
     toast("Facecam recording stopped — camera released.");
   }
-  state.route = route; state.params = params; window.scrollTo(0,0); render();
+  state.route = route; state.params = params; window.scrollTo(0,0);
+  if(route==="library" && usingRealBackend){
+    render();
+    loadPurchasedResources();
+  } else {
+    render();
+  }
 }
 window.nav = nav;
 
@@ -805,7 +854,7 @@ async function establishSession(name, cls, board, saved, isOwner, loginMeta, acc
     id: loginMeta.authUserId || uid("u"), name, username: loginMeta.username || saved?.username || name, fullName: saved?.fullName || name, class: saved?.class || Number(cls) || 9, board: board||saved?.board||"CBSE",
     accountType: accountType || saved?.accountType || "student",
     subjects: SUBJECTS.slice(0,4), bio: saved?.bio || "", avatarColor: colorFor(name||"A"),
-    points: usingRealBackend ? (saved?.points ?? 0) : (saved?.points ?? 50), reputation: saved?.reputation ?? 50, level: saved?.level || "New Member",
+    points: usingRealBackend ? 0 : (saved?.points ?? 50), reputation: saved?.reputation ?? 50, level: saved?.level || "New Member",
     badges: saved?.badges || [], isOwner,
     uploaded: saved?.uploaded || [], purchased: saved?.purchased || [], saved: saved?.saved || [],
     asked: saved?.asked || [], answeredIds: saved?.answeredIds || [], ratedResources: saved?.ratedResources || [],
@@ -815,7 +864,8 @@ async function establishSession(name, cls, board, saved, isOwner, loginMeta, acc
     pointsEarnedDate: new Date().toDateString(),
     _passwordHash: saved?.passwordHash || loginMeta.passwordHash,
     _firstLogin: saved?.firstLogin || Date.now(), _loginCount: (saved?.loginCount||0)+1,
-    _authUserId: loginMeta.authUserId || null
+    _authUserId: loginMeta.authUserId || null,
+    status: saved?.status || "active"
   };
   state.transactions = saved?.transactions || [{id:uid("tx"), reason:"Welcome bonus", amount:50, ts:Date.now(), balance:50}];
   state.focus.log = saved?.focusLog || [];
@@ -823,15 +873,27 @@ async function establishSession(name, cls, board, saved, isOwner, loginMeta, acc
   state.notifications = [{id:uid("n"), title: saved? "Welcome back 👋" : "Welcome to VidyaLoop 👋", desc: saved? "Your stats and progress are right where you left them." : "Start by exploring the marketplace or asking a doubt.", ts:Date.now(), read:false}];
   nav(state.user.accountType==="store_owner" ? "storeDashboard" : "dashboard");
   toast(isOwner? "Logged in as "+state.user.name+" (Owner)" : "Logged in as "+state.user.name);
-  if(usingRealBackend){
-    await syncRewardPoints();
-  }
-  await persistUser();
   if(state.user.accountType==="store_owner") loadMyStore();
   if(usingRealBackend){
+    // Supabase is authoritative for account-critical values. Do not persist
+    // the temporary frontend state until these values have been loaded.
+    try{
+      const acctNow = await fetchAccountData(state.user._authUserId);
+      if(Number.isFinite(Number(acctNow.points))) state.user.points = Number(acctNow.points);
+      if(acctNow.reputation != null) state.user.reputation = Number(acctNow.reputation);
+      if(acctNow.isAdminFlag) state.user.isOwner = true;
+    }catch(e){ console.error("Authoritative account refresh failed:",e); }
     loadPointTransactions();
-    loadResourcesFromDB();
-    loadDoubtsFromDB();
+    // Load resources first, then overlay the user's purchases. Running both
+    // concurrently can cause a late resources refresh to wipe the purchased
+    // resource cache used by My Library.
+    try{
+      await loadResourcesFromDB();
+      await loadPurchasedResources();
+    }catch(err){
+      console.error("Initial resource/library load failed:", err);
+    }
+    await loadDoubtsFromDB();
   }
 }
 
@@ -875,6 +937,56 @@ async function loadResourcesFromDB(){
   render();
 }
 window.loadResourcesFromDB = loadResourcesFromDB;
+
+/* Purchases are stored in resource_purchases, not in the profile.
+   Keep the local purchased list synchronized with the database so
+   purchased resources survive reloads and appear in My Library. */
+async function loadPurchasedResources(){
+  if(!usingRealBackend || !state.user?._authUserId) return;
+  const uidNow = state.user._authUserId;
+
+  const { data: purchases, error: purchaseErr } = await sb
+    .from("resource_purchases")
+    .select("resource_id")
+    .eq("user_id", uidNow);
+
+  if(purchaseErr){
+    console.error("loadPurchasedResources failed:", purchaseErr);
+    toast("Couldn't load My Library: " + purchaseErr.message);
+    return;
+  }
+
+  const ids = [...new Set((purchases || []).map(p => p.resource_id).filter(Boolean))];
+  state.user.purchased = ids;
+
+  if(ids.length){
+    const { data: rows, error: resourceErr } = await sb
+      .from("resources")
+      .select("*")
+      .in("id", ids);
+
+    if(resourceErr){
+      console.error("load purchased resources failed:", resourceErr);
+      toast("Couldn't load purchased notes: " + resourceErr.message);
+      return;
+    }
+
+    const byId = Object.fromEntries(RESOURCES.map(r => [r.id, r]));
+    (rows || []).forEach(row => {
+      const mapped = mapDbResource(row);
+      if(!mapped.creator) mapped.creator = "Student";
+      byId[mapped.id] = mapped;
+    });
+    RESOURCES.length = 0;
+    RESOURCES.push(...Object.values(byId));
+  }
+
+  await persistUser();
+  if(state.route === "library") render();
+}
+window.loadPurchasedResources = loadPurchasedResources;
+
+window.loadPurchasedResources = loadPurchasedResources;
 
 function mapDbResource(r){
   return {
@@ -1065,15 +1177,6 @@ function toggleTheme(){
 }
 window.toggleTheme = toggleTheme;
 
-async function syncRewardPoints(){
-  if(!usingRealBackend || !state.user?._authUserId) return null;
-  const { data, error } = await sb.from("reward_points").select("balance").eq("user_id",state.user._authUserId).maybeSingle();
-  if(error){ console.error("Reward Point sync failed:",error); return null; }
-  if(data && typeof data.balance === "number") state.user.points = data.balance;
-  return state.user.points;
-}
-window.syncRewardPoints = syncRewardPoints;
-
 async function purchase(resId){
   const r = RESOURCES.find(x=>x.id===resId);
   const u = state.user;
@@ -1081,64 +1184,44 @@ async function purchase(resId){
   if(!r) return toast("Resource not found.");
   if(r.creatorId===u.id || r.creatorId===u._authUserId) return toast("You can't purchase your own resource.");
   if(u.purchased.includes(resId)) return toast("Already in your library.");
-  const price = Number(r.price)||0;
-  if(price <= 0) return toast("This resource has an invalid price.");
 
   if(usingRealBackend){
-    // Always read the authoritative balance before spending. Never trust a stale frontend value.
-    const { data: balanceRow, error: balanceErr } = await sb.from("reward_points")
+    // The server-side transaction is authoritative: it checks balance,
+    // deducts RP, creates the library record, and increments purchases atomically.
+    const { data, error } = await sb.rpc("purchase_resource", { p_resource_id:resId });
+    if(error){
+      console.error("purchase_resource failed:",error);
+      return toast("Purchase failed: "+(error.message || "Database error."));
+    }
+    if(!data || data.success !== true){
+      return toast(data?.message || "Purchase failed. Nothing was deducted.");
+    }
+
+    // Refresh the real balance and library from Supabase after the transaction.
+    const { data: rp, error: rpError } = await sb.from("reward_points")
       .select("balance").eq("user_id",u._authUserId).maybeSingle();
-    if(balanceErr){ console.error("Balance lookup failed:", balanceErr); return toast("Purchase failed — could not check your Reward Points."); }
-    const balance = Number(balanceRow?.balance ?? 0);
-    u.points = balance;
-    if(balance < price) return toast("Not enough Reward Points.");
-
-    const { data: already } = await sb.from("resource_purchases")
-      .select("id").eq("resource_id",resId).eq("user_id",u._authUserId).maybeSingle();
-    if(already) { if(!u.purchased.includes(resId)) u.purchased.push(resId); return toast("Already in your library."); }
-
-    // Deduct points through the server RPC. It returns the NEW balance, not true/false.
-    const { data: newBalance, error: spendErr } = await sb.rpc("spend_reward_points", {
-      target_user_id:u._authUserId, point_amount:price, point_reason:"Purchased: "+r.title
-    });
-    if(spendErr || typeof newBalance !== "number"){
-      console.error("spend_reward_points failed:", spendErr, newBalance);
-      return toast("Purchase failed — points could not be deducted.");
+    if(rpError){
+      console.error("Balance refresh failed:",rpError);
+    } else if(rp){
+      u.points = Number(rp.balance);
     }
 
-    // Add the resource to the user's library.
-    const { error: purchaseErr } = await sb.from("resource_purchases").insert({
-      resource_id:resId, user_id:u._authUserId
-    });
-    if(purchaseErr){
-      console.error("resource_purchases insert failed:", purchaseErr);
-      // Refund the exact amount because the library insert failed after deduction.
-      const { error: refundErr } = await sb.rpc("add_reward_points", {
-        target_user_id:u._authUserId, point_amount:price, point_reason:"Refund: failed purchase of "+r.title
-      });
-      console.error("Purchase refund:", refundErr || "success");
-      await syncRewardPoints();
-      return toast("Purchase failed — the resource could not be added to your library.");
-    }
-
-    u.points = Number(newBalance);
-    if(!u.purchased.includes(resId)) u.purchased.push(resId);
-    r.purchases = (r.purchases||0) + 1;
-    await sb.from("resources").update({ purchases:r.purchases }).eq("id",resId);
+    await loadPurchasedResources();
     await loadPointTransactions();
-    await persistUser();
+    const updated = RESOURCES.find(x=>x.id===resId);
+    if(updated) r.purchases = updated.purchases;
     toast("Purchase complete — added to your library.");
     render();
     return;
   }
 
-  if(u.points < price) return toast("Not enough Reward Points.");
-  u.points -= price;
-  addTx("Purchased: "+r.title, -price);
+  if(u.points < r.price) return toast("Not enough Reward Points.");
+  u.points -= r.price;
+  addTx("Purchased: "+r.title, -r.price);
   u.purchased.push(resId);
   r.purchases = (r.purchases||0) + 1;
-  notify("Purchase complete", r.title+" added to your library.");
   await persistUser();
+  notify("Purchase complete", r.title+" added to your library.");
   render();
 }
 window.purchase = purchase;
@@ -1147,18 +1230,22 @@ async function redeemProduct(prodId){
   const p = STORE_PRODUCTS.find(x=>x.id===prodId);
   const u = state.user;
   if(!u) return nav("login");
-  if(u.points < p.cost) return toast("Not enough Reward Points for this item.");
+  if(!p) return toast("Store item not found.");
   if(usingRealBackend){
-    const { data, error } = await sb.rpc("spend_reward_points", { target_user_id:u._authUserId, point_amount:p.cost, point_reason:"Redeemed: "+p.name });
-    if(error || typeof data !== "number"){ console.error("spend_reward_points failed:",error,data); toast("Redemption failed — points could not be deducted."); return; }
+    const { data, error } = await sb.rpc("spend_reward_points", {
+      target_user_id:u._authUserId, point_amount:p.cost, point_reason:"Redeemed: "+p.name
+    });
+    if(error){ console.error("Redemption failed:",error); return toast("Redemption failed: "+error.message); }
+    if(data == null) return toast("Redemption failed — points could not be deducted.");
     u.points = Number(data);
-    await persistUser();
-    loadPointTransactions();
+    await loadPointTransactions();
   } else {
+    if(u.points < p.cost) return toast("Not enough Reward Points for this item.");
     u.points -= p.cost;
     addTx("Redeemed: "+p.name, -p.cost);
   }
   u.redeemed.push({id:uid("rd"), productId:p.id, name:p.name, cost:p.cost, ts:Date.now()});
+  await persistUser();
   notify("Item redeemed!", p.name+" — our team will coordinate pickup/delivery.");
   render();
 }
@@ -1289,34 +1376,22 @@ async function redeemPromoCode(){
   if(!code) return toast("Enter a promo code.");
 
   const { data, error } = await sb.rpc("redeem_promo_code", { p_code: code });
-
   if(error){
-    console.error("redeem_promo_code failed:", error);
-    const msg = error.message || "Promo code could not be redeemed.";
-    return toast(msg);
+    console.error("Promo redemption failed:", error);
+    return toast(error.message || "Promo code could not be redeemed.");
   }
 
-  const points = Number(data?.points_awarded || 0);
-  if(points <= 0) return toast("Promo code redeemed, but no Reward Points were awarded.");
+  const result = Array.isArray(data) ? data[0] : data;
+  const points = Number(result?.points_awarded ?? result?.rp_bonus ?? 0);
+  if(!result?.success){
+    return toast(result?.message || "Promo code could not be redeemed.");
+  }
 
   if(input) input.value = "";
 
-  // Reload the authoritative balance/transactions from Supabase immediately.
-  try{
-    const { data: rp, error: rpErr } = await sb.from("reward_points")
-      .select("balance")
-      .eq("user_id", state.user._authUserId)
-      .maybeSingle();
-
-    if(!rpErr && rp && typeof rp.balance === "number"){
-      state.user.points = rp.balance;
-    } else {
-      state.user.points += points;
-    }
-  }catch(e){
-    state.user.points += points;
-  }
-
+  // Refresh from Supabase instead of incrementing a local value.
+  const fresh = await fetchAccountData(state.user._authUserId);
+  if(fresh.points !== undefined) state.user.points = fresh.points;
   await loadPointTransactions();
   toast("Promo redeemed! +"+points+" Reward Points.");
   render();
@@ -1585,23 +1660,20 @@ function startFocus(subject){
   clearInterval(state.focus.timer);
   state.focus.timer = setInterval(()=>{ state.focus.elapsed = Date.now()-state.focus.startedAt; renderFocusTimerOnly(); }, 1000);
   render();
-  persistUser();
 }
 window.startFocus = startFocus;
-async function pauseFocus(){
+function pauseFocus(){
   if(!state.focus.active || state.focus.paused) return;
   clearInterval(state.focus.timer);
   state.focus.paused = true;
-  await persistUser();
   render();
 }
 window.pauseFocus = pauseFocus;
-async function resumeFocus(){
+function resumeFocus(){
   if(!state.focus.active || !state.focus.paused) return;
   state.focus.paused = false;
   state.focus.startedAt = Date.now() - state.focus.elapsed;
   state.focus.timer = setInterval(()=>{ state.focus.elapsed = Date.now()-state.focus.startedAt; renderFocusTimerOnly(); }, 1000);
-  await persistUser();
   render();
 }
 window.resumeFocus = resumeFocus;
@@ -1610,10 +1682,12 @@ async function endFocus(){
   const mins = Math.round(state.focus.elapsed/60000);
   if(mins>0){
     state.focus.log.push({date:new Date().toDateString(), minutes:mins, subject:state.focus.subject});
+    // Wait for the KV write to finish. This prevents a quick reload from
+    // racing the save and losing the just-completed focus session.
+    await persistUser();
     notify("Focus session logged", mins+" minutes of "+state.focus.subject+" recorded.");
   }
   state.focus.active=false; state.focus.paused=false; state.focus.elapsed=0;
-  await persistUser();
   render();
 }
 window.endFocus = endFocus;
@@ -1712,7 +1786,12 @@ async function doUploadResource(){
   if(!chapter.trim()) return toast("Please add the chapter/topic this resource covers.");
   const payload = { title, description, chapter, type:document.getElementById("uploadType").value, subject:document.getElementById("uploadSubject").value, pages:Number(document.getElementById("uploadPages").value)||6, class:Number(document.getElementById("uploadClass").value) };
   const evalResult = AIService.evaluateResource(payload);
-  const status = evalResult.score>=ADMIN_CONFIG.autoApproveThreshold ? "pending" : "needs_improvement";
+  // AI quality gate: scores below 20 are not accepted; all scores 20-100 go to admin review.
+  if(evalResult.score < 20){
+    toast("This resource scored "+evalResult.score+"/100 and cannot be submitted. Please improve the notes and try again.");
+    return;
+  }
+  const status = "pending";
 
   if(usingRealBackend){
     const row = {
@@ -1853,26 +1932,33 @@ function updateConfig(key, value){
   toast(key+" updated to "+ADMIN_CONFIG[key]);
 }
 window.updateConfig = updateConfig;
-async function adminToggleUser(userId, name, currentStatus){
-  if(!state.user?.isOwner) return toast("Admin access is restricted.");
-  if(userId && usingRealBackend){
-    const nextStatus = currentStatus === "suspended" ? "active" : "suspended";
+async function adminToggleUser(userId){
+  if(!state.user?.isOwner) return toast("Admin access required.");
+  if(usingRealBackend){
+    const { data: profile, error: getErr } = await sb.from("profiles")
+      .select("id,status,is_admin,name").eq("id",userId).maybeSingle();
+    if(getErr) return toast("Could not load user: "+getErr.message);
+    if(!profile) return toast("User not found.");
+    if(profile.is_admin) return toast("The owner/admin account cannot be suspended.");
+    const nextStatus = profile.status === "suspended" ? "active" : "suspended";
     const { error } = await sb.from("profiles").update({status:nextStatus}).eq("id",userId);
-    if(error){
-      console.error("Admin status update failed:",error);
-      return toast("Couldn't update account status: "+error.message);
-    }
-    toast(nextStatus === "suspended" ? "Account suspended." : "Account reinstated.");
+    if(error) return toast("Could not update account: "+error.message);
+    // Keep the legacy KV mirror in sync without ever using it as authority.
+    try{
+      const keys = await Store.list("user:");
+      for(const k of keys){
+        const raw = await Store.get(k);
+        if(!raw) continue;
+        try{ const rec=JSON.parse(raw); if(rec.authUserId===userId){ rec.status=nextStatus; await Store.set(k,JSON.stringify(rec)); break; } }catch(e){}
+      }
+    }catch(e){}
+    toast(nextStatus === "suspended" ? "User suspended." : "User reinstated.");
     await loadAllUsers();
     return;
   }
-  const raw = await Store.get(userKey(name));
+  const raw = await Store.get(userKey(userId));
   if(raw){
-    try{
-      const rec = JSON.parse(raw);
-      rec.status = rec.status === "active" ? "suspended" : "active";
-      await Store.set(userKey(name), JSON.stringify(rec));
-    }catch(e){ console.error(e); }
+    try{ const rec=JSON.parse(raw); rec.status=rec.status==="active"?"suspended":"active"; await Store.set(userKey(userId),JSON.stringify(rec)); }catch(e){}
   }
   await loadAllUsers();
 }
@@ -2068,7 +2154,7 @@ function viewDashboard(){
   const recentDoubts = DOUBTS.slice(0,4);
   const quick = [
     ["🔍","Find Notes","marketplace"],["⬆️","Upload Notes","seller"],["❓","Ask a Doubt","askDoubt"],
-    ["🤝","Answer Doubts","doubts"],["⏱️","Focus Mode","focus"],["📝","Take a Quiz","marketplace"]
+    ["🤝","Answer Doubts","doubts"],["⏱️","Focus Mode","focus"],["📝","Take a Quiz","quizLibrary"]
   ];
   return `${navBar()}<div class="pagewrap"><div class="wrap">
     <div class="section-title"><div><h2>Welcome back, ${u.name.split(" ")[0]} 👋</h2><p class="muted small">Class ${u.class} · ${u.board} · ${u.streak}-day streak 🔥</p></div></div>
@@ -2156,11 +2242,11 @@ function viewResource(id){
         <hr class="div">
         <p style="font-size:14.5px; line-height:1.6;">${r.description}</p>
 
-        ${r.hasFile && r.fileUrl && (owned || isOwn) ? `
+        ${r.hasFile && (owned || isOwn) ? `
         <div class="section-title" style="margin-top:24px;"><h3 style="font-size:16px;">Uploaded file</h3></div>
-        <div class="card">
-          ${(r.fileType||"").startsWith("image/") ? `<img src="${r.fileUrl}" style="max-width:100%; border-radius:10px;">` : `<embed src="${r.fileUrl}" type="application/pdf" style="width:100%; height:500px; border-radius:8px;">`}
-          <div style="margin-top:10px;"><a class="btn btn-outline btn-sm" href="${r.fileUrl}" target="_blank" download="${r.fileName||"resource"}">⬇ Download</a></div>
+        <div class="card" id="resourceFile_${r.id}">
+          <div class="small muted" style="margin-bottom:10px;">Loading your uploaded notes…</div>
+          <button class="btn btn-primary btn-sm" type="button" onclick="openResourceFile('${r.id}')">Open notes</button>
         </div>
         ` : `
         <div class="section-title" style="margin-top:24px;"><h3 style="font-size:16px;">Random sample preview</h3><span class="small muted">Showing ${sampleCount} of ${r.pages} pages · reshuffles each visit</span></div>
@@ -2595,7 +2681,7 @@ function viewAdmin(){
       body = `<div class="empty"><div class="ic">👤</div>Nobody has logged in yet — this list fills up as real students sign in.</div>`;
     } else {
       body = `<div class="section-title"><span class="small muted">${cache.length} registered user${cache.length!==1?"s":""}${usingRealBackend?" · saved permanently":" · this browser session only"}</span><button class="btn btn-ghost btn-sm" onclick="loadAllUsers()">↻ Refresh</button></div>
-      <div class="card"><table><tr><th>Full Name</th><th>Username</th><th>Class</th><th>Board</th><th>Points</th><th>Reputation</th><th>First logged in</th><th>Last seen</th><th>Logins</th><th>Status</th><th></th></tr>${cache.map(ru=>`<tr><td>${ru.fullName || ru.name}${ru.owner?' <span class="tag tag-amber">Owner</span>':""}</td><td>${ru.username || "—"}</td><td>${ru.class}</td><td>${ru.board}</td><td class="mono">${ru.points}</td><td class="mono">${ru.reputation}</td><td class="small muted">${new Date(ru.firstLogin).toLocaleString()}</td><td class="small muted">${timeAgo(ru.lastLogin)}</td><td class="mono">${ru.loginCount}</td><td>${ru.status==="active"?'<span class="tag tag-green">Active</span>':'<span class="tag tag-pink">Suspended</span>'}</td><td>${ru.owner?"":`<button class="btn btn-outline btn-sm" onclick="adminToggleUser('${ru.id}', '${(ru.name||"").replace(/'/g,"\\'")}', '${ru.status}')">${ru.status==="active"?"Suspend":"Reinstate"}</button>`}</td></tr>`).join("")}</table></div>`;
+      <div class="card"><table><tr><th>Full Name</th><th>Username</th><th>Class</th><th>Board</th><th>Points</th><th>Reputation</th><th>First logged in</th><th>Last seen</th><th>Logins</th><th>Status</th><th></th></tr>${cache.map(ru=>`<tr><td>${ru.fullName || ru.name}${ru.owner?' <span class="tag tag-amber">Owner</span>':""}</td><td>${ru.username || "—"}</td><td>${ru.class}</td><td>${ru.board}</td><td class="mono">${ru.points}</td><td class="mono">${ru.reputation}</td><td class="small muted">${new Date(ru.firstLogin).toLocaleString()}</td><td class="small muted">${timeAgo(ru.lastLogin)}</td><td class="mono">${ru.loginCount}</td><td>${ru.status==="active"?'<span class="tag tag-green">Active</span>':'<span class="tag tag-pink">Suspended</span>'}</td><td>${ru.owner?"":`<button class="btn btn-outline btn-sm" onclick="adminToggleUser('${ru.id}')">${ru.status==="active"?"Suspend":"Reinstate"}</button>`}</td></tr>`).join("")}</table></div>`;
     }
   } else if(tab==="pricing"){
     body = `<div class="card">
@@ -2603,7 +2689,7 @@ function viewAdmin(){
       <div class="field"><label>Accepted-answer bonus (points)</label><input type="number" value="${ADMIN_CONFIG.acceptedBonus}" onchange="updateConfig('acceptedBonus',this.value)"></div>
       <div class="field"><label>Reputation penalty (upheld report / rejection)</label><input type="number" value="${ADMIN_CONFIG.reportPenalty}" onchange="updateConfig('reportPenalty',this.value)"></div>
       <div class="field"><label>Max resource price (points)</label><input type="number" value="${ADMIN_CONFIG.maxResourcePrice}" onchange="updateConfig('maxResourcePrice',this.value)"></div>
-      <div class="field"><label>Auto-approve AI score threshold</label><input type="number" value="${ADMIN_CONFIG.autoApproveThreshold}" onchange="updateConfig('autoApproveThreshold',this.value)"></div>
+      <div class="field"><label>Minimum AI quality score to submit</label><input type="number" value="${ADMIN_CONFIG.autoApproveThreshold}" onchange="updateConfig('autoApproveThreshold',this.value)"></div>
       <div class="field"><label>Daily Reward Point earning cap (anti-abuse)</label><input type="number" value="${ADMIN_CONFIG.dailyPointCap}" onchange="updateConfig('dailyPointCap',this.value)"></div>
       <p class="small muted">These rules are live — changing a value here changes what students earn/pay from this point on.</p>
     </div>
@@ -2774,6 +2860,20 @@ function saveBio(){
 }
 window.saveBio = saveBio;
 
+function viewQuizLibrary(){
+  const u = state.user;
+  const owned = RESOURCES.filter(r=>r.status==="approved" && u?.purchased.includes(r.id));
+  const available = RESOURCES.filter(r=>r.status==="approved");
+  return `${navBar()}<div class="pagewrap"><div class="wrap" style="max-width:900px;">
+    <div class="section-title"><div><h2>Take a Quiz</h2><p class="muted small">Choose a resource and generate a quiz from its subject and topic.</p></div></div>
+    ${owned.length ? `<div class="section-title"><h3 style="font-size:15px;">Your purchased resources</h3></div><div class="grid cols-3">${owned.map(r=>`<div class="card card-hover">
+      <div class="meta" style="margin-bottom:8px;"><span class="tag tag-violet">${r.subject}</span><span class="tag tag-muted">Class ${r.class}</span></div>
+      <h4 style="margin-bottom:6px;">${r.title}</h4><p class="small muted" style="margin-bottom:12px;">${r.chapter} · ${r.pages} pages</p>
+      <button class="btn btn-primary btn-block btn-sm" onclick="nav('quizSetup',{id:'${r.id}'})">Create quiz</button>
+    </div>`).join("")}</div>` : `<div class="card empty"><div class="ic">📝</div>You don't have any purchased resources yet.<br><span class="small">Purchase a resource first, then come back here to quiz yourself.</span><br><button class="btn btn-outline btn-sm" style="margin-top:12px;" onclick="nav('marketplace')">Browse marketplace</button></div>`}
+  </div></div>${footer()}`;
+}
+
 function viewQuizSetup(id){
   const r = RESOURCES.find(x=>x.id===id);
   return `${navBar()}<div class="pagewrap"><div class="wrap" style="max-width:560px;">
@@ -2837,6 +2937,27 @@ function viewSearch(){
 }
 
 /* ---------------- MAIN RENDER ---------------- */
+async function hydrateResourceFile(id){
+  const r = RESOURCES.find(x=>x.id===id);
+  if(!r || !r.hasFile || !state.user) return;
+  const owned = state.user.purchased.includes(id) || r.creatorId === state.user._authUserId;
+  if(!owned) return;
+  const box = document.getElementById("resourceFile_"+id);
+  if(!box) return;
+  const url = await getResourceFileUrl(r);
+  if(!url){
+    box.innerHTML = '<div class="small muted">Could not open the uploaded notes. The file storage permissions need attention.</div>';
+    return;
+  }
+  const safeUrl = url.replace(/"/g,'&quot;');
+  box.innerHTML = (r.fileType||"").startsWith("image/")
+    ? `<img src="${safeUrl}" alt="Uploaded notes" style="max-width:100%; max-height:800px; object-fit:contain; border-radius:10px; display:block; margin:auto;">`
+      + `<div style="margin-top:10px; display:flex; gap:8px; flex-wrap:wrap;"><button class="btn btn-outline btn-sm" type="button" onclick="openResourceFile('${id}')">Open full size</button></div>`
+    : `<iframe src="${safeUrl}" title="Uploaded notes" style="width:100%; height:650px; border:0; border-radius:8px; background:#fff;"></iframe>`
+      + `<div style="margin-top:10px;"><button class="btn btn-outline btn-sm" type="button" onclick="openResourceFile('${id}')">Open / download PDF</button></div>`;
+}
+window.hydrateResourceFile = hydrateResourceFile;
+
 function render(){
   document.documentElement.setAttribute("data-theme", state.theme);
   const app = document.getElementById("app");
@@ -2863,6 +2984,7 @@ function render(){
     case "sellerResult": html = viewSellerResult(state.params.id); break;
     case "admin": html = viewAdmin(); break;
     case "profile": html = viewProfile(); break;
+    case "quizLibrary": html = viewQuizLibrary(); break;
     case "quizSetup": html = viewQuizSetup(state.params.id); break;
     case "quizTake": html = viewQuizTake(); break;
     case "quizResult": html = viewQuizResult(); break;
@@ -2871,6 +2993,9 @@ function render(){
   }
   app.innerHTML = (usingRealBackend? "" : `<div style="background:#7A2E2E; color:#fff; text-align:center; padding:8px 16px; font-size:12.5px; font-weight:600;">⚠️ Offline demo mode — Supabase isn't configured yet, so nothing will be saved permanently. See the setup instructions to connect a real backend.</div>`) + html;
   if(state.route==="assistant") renderChatLog();
+  if(state.route==="resource" && state.params?.id && usingRealBackend){
+    hydrateResourceFile(state.params.id);
+  }
   if(state.route==="focus" && state.facecamActive && facecamStream){
     const v = document.getElementById("facecamPreview");
     if(v) v.srcObject = facecamStream;
@@ -2895,13 +3020,27 @@ async function restoreSupabaseSession(){
     if(!profile){ console.error("Session restore: profile not found"); return false; }
 
     const acct = await fetchAccountData(authUser.id);
+    const authUsername = authUser.user_metadata?.username || "";
+    let kvSaved = null;
+    if(authUsername){
+      const rawSaved = await Store.get(userKey(authUsername));
+      if(rawSaved){
+        try{ kvSaved = JSON.parse(rawSaved); }catch(e){ console.warn("Saved profile data parse failed:", e); }
+      }
+    }
     const saved = {
-      name: profile.name || authUser.user_metadata?.name || authUser.email?.split("@")[0] || "User",
-      fullName: profile.name || authUser.user_metadata?.full_name || authUser.user_metadata?.name || "User",
-      username: authUser.user_metadata?.username || "",
-      class: profile.class, board: profile.board, accountType: profile.account_type,
-      bio: profile.bio || "", reputation: acct.reputation, points: acct.points,
-      streak: acct.streak, is_admin: profile.is_admin === true
+      ...(kvSaved || {}),
+      name: profile.name || kvSaved?.name || authUser.user_metadata?.name || authUser.email?.split("@")[0] || "User",
+      fullName: profile.name || kvSaved?.fullName || authUser.user_metadata?.full_name || authUser.user_metadata?.name || "User",
+      username: authUsername || kvSaved?.username || "",
+      class: profile.class ?? kvSaved?.class,
+      board: profile.board ?? kvSaved?.board,
+      accountType: profile.account_type || kvSaved?.accountType,
+      bio: profile.bio ?? kvSaved?.bio ?? "",
+      reputation: acct.reputation ?? kvSaved?.reputation,
+      points: acct.points ?? kvSaved?.points,
+      streak: acct.streak ?? kvSaved?.streak,
+      is_admin: profile.is_admin === true
     };
     const name = saved.name;
     const username = saved.username || name;
