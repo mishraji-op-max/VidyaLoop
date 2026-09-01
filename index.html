@@ -41,6 +41,14 @@ a{color:inherit; text-decoration:none;}
 button{font-family:inherit; cursor:pointer;}
 ::selection{background:var(--violet); color:#fff;}
 
+/* ---------- Clean custom scrollbars ---------- */
+html{scrollbar-width:thin; scrollbar-color:var(--border2) transparent;}
+::-webkit-scrollbar{width:9px; height:9px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:linear-gradient(180deg,var(--border2),var(--violet)); border-radius:999px; border:2px solid transparent; background-clip:padding-box;}
+::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,var(--violet),var(--cyan)); border:2px solid transparent; background-clip:padding-box;}
+::-webkit-scrollbar-corner{background:transparent;}
+
 /* ---------- Neon background ---------- */
 #neonbg{position:fixed; inset:0; z-index:0; overflow:hidden; pointer-events:none;}
 .blob{position:absolute; border-radius:50%; filter:blur(90px); opacity:.35; mix-blend-mode:screen;}
@@ -419,7 +427,7 @@ async function persistUser(){
   const u = state.user;
   const record = {
     name:u.name, fullName:u.fullName || u.name, username:u.username || u.name, class:u.class, board:u.board, bio:u.bio,
-    points:u.points, reputation:u.reputation, level:u.level, badges:u.badges,
+    ...(usingRealBackend ? {} : {points:u.points}), reputation:u.reputation, level:u.level, badges:u.badges,
     uploaded:u.uploaded, purchased:u.purchased, saved:u.saved, asked:u.asked, answeredIds:u.answeredIds,
     ratedResources:u.ratedResources, redeemed:u.redeemed, recentlyViewed:u.recentlyViewed,
     quizHistory:u.quizHistory, streak:u.streak, joinDate:u.joinDate,
@@ -792,12 +800,12 @@ async function hashPassword(pw){
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");
 }
 
-function establishSession(name, cls, board, saved, isOwner, loginMeta, accountType){
+async function establishSession(name, cls, board, saved, isOwner, loginMeta, accountType){
   state.user = {
     id: loginMeta.authUserId || uid("u"), name, username: loginMeta.username || saved?.username || name, fullName: saved?.fullName || name, class: saved?.class || Number(cls) || 9, board: board||saved?.board||"CBSE",
     accountType: accountType || saved?.accountType || "student",
     subjects: SUBJECTS.slice(0,4), bio: saved?.bio || "", avatarColor: colorFor(name||"A"),
-    points: saved?.points ?? 50, reputation: saved?.reputation ?? 50, level: saved?.level || "New Member",
+    points: usingRealBackend ? (saved?.points ?? 0) : (saved?.points ?? 50), reputation: saved?.reputation ?? 50, level: saved?.level || "New Member",
     badges: saved?.badges || [], isOwner,
     uploaded: saved?.uploaded || [], purchased: saved?.purchased || [], saved: saved?.saved || [],
     asked: saved?.asked || [], answeredIds: saved?.answeredIds || [], ratedResources: saved?.ratedResources || [],
@@ -815,7 +823,10 @@ function establishSession(name, cls, board, saved, isOwner, loginMeta, accountTy
   state.notifications = [{id:uid("n"), title: saved? "Welcome back 👋" : "Welcome to VidyaLoop 👋", desc: saved? "Your stats and progress are right where you left them." : "Start by exploring the marketplace or asking a doubt.", ts:Date.now(), read:false}];
   nav(state.user.accountType==="store_owner" ? "storeDashboard" : "dashboard");
   toast(isOwner? "Logged in as "+state.user.name+" (Owner)" : "Logged in as "+state.user.name);
-  persistUser();
+  if(usingRealBackend){
+    await syncRewardPoints();
+  }
+  await persistUser();
   if(state.user.accountType==="store_owner") loadMyStore();
   if(usingRealBackend){
     loadPointTransactions();
@@ -1054,93 +1065,80 @@ function toggleTheme(){
 }
 window.toggleTheme = toggleTheme;
 
+async function syncRewardPoints(){
+  if(!usingRealBackend || !state.user?._authUserId) return null;
+  const { data, error } = await sb.from("reward_points").select("balance").eq("user_id",state.user._authUserId).maybeSingle();
+  if(error){ console.error("Reward Point sync failed:",error); return null; }
+  if(data && typeof data.balance === "number") state.user.points = data.balance;
+  return state.user.points;
+}
+window.syncRewardPoints = syncRewardPoints;
+
 async function purchase(resId){
   const r = RESOURCES.find(x=>x.id===resId);
   const u = state.user;
   if(!u) return nav("login");
   if(!r) return toast("Resource not found.");
-  if(r.creatorId===u.id) return toast("You can't purchase your own resource.");
+  if(r.creatorId===u.id || r.creatorId===u._authUserId) return toast("You can't purchase your own resource.");
   if(u.purchased.includes(resId)) return toast("Already in your library.");
-  const price = Number(r.price);
-  if(!Number.isFinite(price) || price <= 0) return toast("This resource has an invalid price.");
+  const price = Number(r.price)||0;
+  if(price <= 0) return toast("This resource has an invalid price.");
+
   if(usingRealBackend){
-    if(!u._authUserId){
-      console.error("Purchase failed: missing authenticated user id", u);
-      toast("Purchase failed — please sign in again.");
-      return;
-    }
-
-    // Always use the server-side RP balance, not the possibly stale frontend value.
-    const { data: rp, error: rpLoadError } = await sb.from("reward_points")
+    // Always read the authoritative balance before spending. Never trust a stale frontend value.
+    const { data: balanceRow, error: balanceErr } = await sb.from("reward_points")
       .select("balance").eq("user_id",u._authUserId).maybeSingle();
-    if(rpLoadError){
-      console.error("Purchase RP balance lookup failed:", rpLoadError);
-      toast("Purchase failed — couldn't check your Reward Points.");
-      return;
-    }
-    if(!rp || Number(rp.balance) < price){
-      u.points = Number(rp?.balance ?? 0);
-      render();
-      toast("Not enough Reward Points.");
-      return;
-    }
+    if(balanceErr){ console.error("Balance lookup failed:", balanceErr); return toast("Purchase failed — could not check your Reward Points."); }
+    const balance = Number(balanceRow?.balance ?? 0);
+    u.points = balance;
+    if(balance < price) return toast("Not enough Reward Points.");
 
-    const { data: already, error: alreadyError } = await sb.from("resource_purchases")
+    const { data: already } = await sb.from("resource_purchases")
       .select("id").eq("resource_id",resId).eq("user_id",u._authUserId).maybeSingle();
-    if(alreadyError){
-      console.error("Purchase ownership check failed:", alreadyError);
-      toast("Purchase failed — couldn't verify the resource.");
-      return;
-    }
-    if(already) return toast("Already in your library.");
+    if(already) { if(!u.purchased.includes(resId)) u.purchased.push(resId); return toast("Already in your library."); }
 
-    const { data: newBalance, error: spendError } = await sb.rpc("spend_reward_points", {
-      target_user_id:u._authUserId,
-      point_amount:price,
-      point_reason:"Purchased: "+r.title
+    // Deduct points through the server RPC. It returns the NEW balance, not true/false.
+    const { data: newBalance, error: spendErr } = await sb.rpc("spend_reward_points", {
+      target_user_id:u._authUserId, point_amount:price, point_reason:"Purchased: "+r.title
     });
-    if(spendError || newBalance === null || newBalance === undefined){
-      console.error("Purchase RP deduction failed:", spendError, { newBalance, userId:u._authUserId, price });
-      toast("Purchase failed — points could not be deducted.");
-      return;
+    if(spendErr || typeof newBalance !== "number"){
+      console.error("spend_reward_points failed:", spendErr, newBalance);
+      return toast("Purchase failed — points could not be deducted.");
     }
 
-    // The RPC returns the NEW numeric balance. Do not compare it with true.
-    u.points = Number(newBalance);
-
-    const { error: purchaseErr } = await sb.from("resource_purchases")
-      .insert({ resource_id:resId, user_id:u._authUserId });
+    // Add the resource to the user's library.
+    const { error: purchaseErr } = await sb.from("resource_purchases").insert({
+      resource_id:resId, user_id:u._authUserId
+    });
     if(purchaseErr){
-      console.error("resource_purchases insert failed after RP deduction:", purchaseErr);
-      // Try to roll the RP deduction back so a failed library insert doesn't cost the user points.
-      try{
-        await sb.rpc("add_reward_points", {
-          target_user_id:u._authUserId,
-          point_amount:price,
-          point_reason:"Refund: failed purchase of "+r.title
-        });
-      }catch(refundError){ console.error("Purchase refund failed:", refundError); }
-      await loadPointTransactions();
-      toast("Purchase failed — the resource could not be added to your library.");
-      return;
+      console.error("resource_purchases insert failed:", purchaseErr);
+      // Refund the exact amount because the library insert failed after deduction.
+      const { error: refundErr } = await sb.rpc("add_reward_points", {
+        target_user_id:u._authUserId, point_amount:price, point_reason:"Refund: failed purchase of "+r.title
+      });
+      console.error("Purchase refund:", refundErr || "success");
+      await syncRewardPoints();
+      return toast("Purchase failed — the resource could not be added to your library.");
     }
 
-    await sb.from("resources").update({ purchases: (r.purchases||0)+1 }).eq("id", resId);
     u.points = Number(newBalance);
-    u.purchased.push(resId);
+    if(!u.purchased.includes(resId)) u.purchased.push(resId);
     r.purchases = (r.purchases||0) + 1;
+    await sb.from("resources").update({ purchases:r.purchases }).eq("id",resId);
     await loadPointTransactions();
-    notify("Purchase complete", r.title+" added to your library.");
+    await persistUser();
+    toast("Purchase complete — added to your library.");
     render();
     return;
-  } else {
-    if(u.points < price) return toast("Not enough Reward Points.");
-    u.points -= price;
-    addTx("Purchased: "+r.title, -price);
   }
+
+  if(u.points < price) return toast("Not enough Reward Points.");
+  u.points -= price;
+  addTx("Purchased: "+r.title, -price);
   u.purchased.push(resId);
   r.purchases = (r.purchases||0) + 1;
   notify("Purchase complete", r.title+" added to your library.");
+  await persistUser();
   render();
 }
 window.purchase = purchase;
@@ -1152,8 +1150,9 @@ async function redeemProduct(prodId){
   if(u.points < p.cost) return toast("Not enough Reward Points for this item.");
   if(usingRealBackend){
     const { data, error } = await sb.rpc("spend_reward_points", { target_user_id:u._authUserId, point_amount:p.cost, point_reason:"Redeemed: "+p.name });
-    if(error || data === null || data === undefined){ console.error("Redemption RP deduction failed:", error); toast("Redemption failed — points could not be deducted."); return; }
-    u.points -= p.cost;
+    if(error || typeof data !== "number"){ console.error("spend_reward_points failed:",error,data); toast("Redemption failed — points could not be deducted."); return; }
+    u.points = Number(data);
+    await persistUser();
     loadPointTransactions();
   } else {
     u.points -= p.cost;
@@ -1586,24 +1585,27 @@ function startFocus(subject){
   clearInterval(state.focus.timer);
   state.focus.timer = setInterval(()=>{ state.focus.elapsed = Date.now()-state.focus.startedAt; renderFocusTimerOnly(); }, 1000);
   render();
+  persistUser();
 }
 window.startFocus = startFocus;
-function pauseFocus(){
+async function pauseFocus(){
   if(!state.focus.active || state.focus.paused) return;
   clearInterval(state.focus.timer);
   state.focus.paused = true;
+  await persistUser();
   render();
 }
 window.pauseFocus = pauseFocus;
-function resumeFocus(){
+async function resumeFocus(){
   if(!state.focus.active || !state.focus.paused) return;
   state.focus.paused = false;
   state.focus.startedAt = Date.now() - state.focus.elapsed;
   state.focus.timer = setInterval(()=>{ state.focus.elapsed = Date.now()-state.focus.startedAt; renderFocusTimerOnly(); }, 1000);
+  await persistUser();
   render();
 }
 window.resumeFocus = resumeFocus;
-function endFocus(){
+async function endFocus(){
   clearInterval(state.focus.timer);
   const mins = Math.round(state.focus.elapsed/60000);
   if(mins>0){
@@ -1611,6 +1613,7 @@ function endFocus(){
     notify("Focus session logged", mins+" minutes of "+state.focus.subject+" recorded.");
   }
   state.focus.active=false; state.focus.paused=false; state.focus.elapsed=0;
+  await persistUser();
   render();
 }
 window.endFocus = endFocus;
@@ -1850,16 +1853,28 @@ function updateConfig(key, value){
   toast(key+" updated to "+ADMIN_CONFIG[key]);
 }
 window.updateConfig = updateConfig;
-async function adminToggleUser(name){
-  const raw = await Store.get(userKey(name), true);
+async function adminToggleUser(userId, name, currentStatus){
+  if(!state.user?.isOwner) return toast("Admin access is restricted.");
+  if(userId && usingRealBackend){
+    const nextStatus = currentStatus === "suspended" ? "active" : "suspended";
+    const { error } = await sb.from("profiles").update({status:nextStatus}).eq("id",userId);
+    if(error){
+      console.error("Admin status update failed:",error);
+      return toast("Couldn't update account status: "+error.message);
+    }
+    toast(nextStatus === "suspended" ? "Account suspended." : "Account reinstated.");
+    await loadAllUsers();
+    return;
+  }
+  const raw = await Store.get(userKey(name));
   if(raw){
     try{
       const rec = JSON.parse(raw);
-      rec.status = rec.status==="active" ? "suspended" : "active";
-      await Store.set(userKey(name), JSON.stringify(rec), true);
-    }catch(e){}
+      rec.status = rec.status === "active" ? "suspended" : "active";
+      await Store.set(userKey(name), JSON.stringify(rec));
+    }catch(e){ console.error(e); }
   }
-  loadAllUsers();
+  await loadAllUsers();
 }
 window.adminToggleUser = adminToggleUser;
 
@@ -2580,7 +2595,7 @@ function viewAdmin(){
       body = `<div class="empty"><div class="ic">👤</div>Nobody has logged in yet — this list fills up as real students sign in.</div>`;
     } else {
       body = `<div class="section-title"><span class="small muted">${cache.length} registered user${cache.length!==1?"s":""}${usingRealBackend?" · saved permanently":" · this browser session only"}</span><button class="btn btn-ghost btn-sm" onclick="loadAllUsers()">↻ Refresh</button></div>
-      <div class="card"><table><tr><th>Full Name</th><th>Username</th><th>Class</th><th>Board</th><th>Points</th><th>Reputation</th><th>First logged in</th><th>Last seen</th><th>Logins</th><th>Status</th><th></th></tr>${cache.map(ru=>`<tr><td>${ru.fullName || ru.name}${ru.owner?' <span class="tag tag-amber">Owner</span>':""}</td><td>${ru.username || "—"}</td><td>${ru.class}</td><td>${ru.board}</td><td class="mono">${ru.points}</td><td class="mono">${ru.reputation}</td><td class="small muted">${new Date(ru.firstLogin).toLocaleString()}</td><td class="small muted">${timeAgo(ru.lastLogin)}</td><td class="mono">${ru.loginCount}</td><td>${ru.status==="active"?'<span class="tag tag-green">Active</span>':'<span class="tag tag-pink">Suspended</span>'}</td><td>${ru.owner?"":`<button class="btn btn-outline btn-sm" onclick="adminToggleUser('${ru.name.replace(/'/g,"")}')">${ru.status==="active"?"Suspend":"Reinstate"}</button>`}</td></tr>`).join("")}</table></div>`;
+      <div class="card"><table><tr><th>Full Name</th><th>Username</th><th>Class</th><th>Board</th><th>Points</th><th>Reputation</th><th>First logged in</th><th>Last seen</th><th>Logins</th><th>Status</th><th></th></tr>${cache.map(ru=>`<tr><td>${ru.fullName || ru.name}${ru.owner?' <span class="tag tag-amber">Owner</span>':""}</td><td>${ru.username || "—"}</td><td>${ru.class}</td><td>${ru.board}</td><td class="mono">${ru.points}</td><td class="mono">${ru.reputation}</td><td class="small muted">${new Date(ru.firstLogin).toLocaleString()}</td><td class="small muted">${timeAgo(ru.lastLogin)}</td><td class="mono">${ru.loginCount}</td><td>${ru.status==="active"?'<span class="tag tag-green">Active</span>':'<span class="tag tag-pink">Suspended</span>'}</td><td>${ru.owner?"":`<button class="btn btn-outline btn-sm" onclick="adminToggleUser('${ru.id}', '${(ru.name||"").replace(/'/g,"\\'")}', '${ru.status}')">${ru.status==="active"?"Suspend":"Reinstate"}</button>`}</td></tr>`).join("")}</table></div>`;
     }
   } else if(tab==="pricing"){
     body = `<div class="card">
