@@ -26,6 +26,8 @@
 }
 *{box-sizing:border-box; margin:0; padding:0;}
 html,body{height:100%;}
+html{overflow-y:scroll;}
+body{overflow-y:auto;}
 body{
   background:var(--bg); color:var(--text);
   font-family:'Inter',sans-serif;
@@ -40,12 +42,14 @@ h1,h2,h3,h4,.display{font-family:'Space Grotesk',sans-serif; letter-spacing:-0.0
 a{color:inherit; text-decoration:none;}
 button{font-family:inherit; cursor:pointer;}
 ::selection{background:var(--violet); color:#fff;}
-/* ---------- Clean custom scrollbar ---------- */
-*{scrollbar-width:thin; scrollbar-color:rgba(139,92,246,.55) transparent;}
-::-webkit-scrollbar{width:9px;height:9px;}
-::-webkit-scrollbar-track{background:transparent;}
-::-webkit-scrollbar-thumb{background:linear-gradient(180deg,var(--violet),var(--cyan));border-radius:999px;border:2px solid transparent;background-clip:padding-box;}
-::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,var(--violet),var(--pink));background-clip:padding-box;}
+/* ---------- Sleek minimal custom scrollbar ---------- */
+*{scrollbar-width:thin; scrollbar-color:rgba(139,92,246,.68) rgba(35,43,65,.22);}
+html::-webkit-scrollbar{width:7px;height:7px;}
+body::-webkit-scrollbar{width:7px;height:7px;}
+::-webkit-scrollbar-track{background:rgba(35,43,65,.16); border-radius:999px;}
+::-webkit-scrollbar-thumb{background:linear-gradient(180deg,var(--violet),var(--cyan));border-radius:999px;border:1px solid transparent;background-clip:padding-box;min-height:42px;}
+::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,var(--violet2),var(--pink));background-clip:padding-box;}
+::-webkit-scrollbar-corner{background:transparent;}
 .navlinks{scrollbar-width:none;}
 .navlinks::-webkit-scrollbar{display:none;}
 
