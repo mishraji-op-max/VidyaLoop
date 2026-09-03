@@ -50,8 +50,16 @@ body::-webkit-scrollbar{width:7px;height:7px;}
 ::-webkit-scrollbar-thumb{background:linear-gradient(180deg,var(--violet),var(--cyan));border-radius:999px;border:1px solid transparent;background-clip:padding-box;min-height:42px;}
 ::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,var(--violet2),var(--pink));background-clip:padding-box;}
 ::-webkit-scrollbar-corner{background:transparent;}
-.navlinks{scrollbar-width:none;}
-.navlinks::-webkit-scrollbar{display:none;}
+/* Keep the navbar horizontally scrollable so every link, including Admin, stays reachable. */
+.navlinks{
+  scrollbar-width:thin;
+  scrollbar-color:var(--border2) rgba(35,43,65,.16);
+  min-width:0;
+}
+.navlinks::-webkit-scrollbar{height:4px;}
+.navlinks::-webkit-scrollbar-track{background:rgba(35,43,65,.16); border-radius:999px;}
+.navlinks::-webkit-scrollbar-thumb{background:linear-gradient(90deg,var(--violet),var(--cyan)); border-radius:999px;}
+.navlinks::-webkit-scrollbar-thumb:hover{background:linear-gradient(90deg,var(--violet2),var(--pink));}
 
 
 /* ---------- Neon background ---------- */
@@ -83,7 +91,7 @@ body::-webkit-scrollbar{width:7px;height:7px;}
 .navinner{display:flex; align-items:center; gap:18px; padding:14px 24px; max-width:1180px; margin:0 auto;}
 .brand{display:flex; align-items:center; gap:10px; font-weight:700; font-size:19px; cursor:pointer; flex-shrink:0;}
 .brand .ring{width:30px; height:30px;}
-.navlinks{display:flex; gap:4px; flex:1; overflow-x:auto;}
+.navlinks{display:flex; gap:4px; flex:1 1 auto; min-width:0; overflow-x:auto; overflow-y:hidden;}
 .navlinks button{background:none; border:none; color:var(--muted); padding:8px 12px; border-radius:8px; font-size:14px; font-weight:500; white-space:nowrap; transition:all .15s;}
 .navlinks button:hover{color:var(--text); background:var(--surface2);}
 .navlinks button.active{color:var(--text); background:var(--surface3); box-shadow:inset 0 0 0 1px var(--border2);}
@@ -113,7 +121,7 @@ body::-webkit-scrollbar{width:7px;height:7px;}
 .grid.cols-2{grid-template-columns:repeat(2,1fr);}
 .grid.cols-4{grid-template-columns:repeat(4,1fr);}
 @media(max-width:900px){.grid.cols-3,.grid.cols-4{grid-template-columns:repeat(2,1fr);}}
-@media(max-width:640px){.grid.cols-2,.grid.cols-3,.grid.cols-4{grid-template-columns:1fr;} .navlinks{display:none;} .searchbox{display:none;}}
+@media(max-width:640px){.grid.cols-2,.grid.cols-3,.grid.cols-4{grid-template-columns:1fr;} .navlinks{display:flex; flex:1 1 auto; min-width:0;} .searchbox{display:none;}}
 
 .btn{display:inline-flex; align-items:center; justify-content:center; gap:8px; padding:11px 20px; border-radius:11px; font-weight:600; font-size:14px; border:1px solid transparent; transition:all .15s;}
 .btn-primary{background:linear-gradient(135deg,var(--violet),var(--pink)); color:#fff; box-shadow:0 6px 20px -6px rgba(139,92,246,.6);}
@@ -217,6 +225,11 @@ hr.div{border:none; border-top:1px solid var(--border); margin:20px 0;}
 .votecol .n{font-weight:700; font-family:'JetBrains Mono',monospace;}
 .answercard{border:1px solid var(--border); border-radius:12px; padding:14px; margin-top:10px;}
 .answercard.accepted{border-color:var(--green); background:rgba(52,211,153,.06);}
+.answer-vote-row{display:flex; gap:8px; margin-top:10px; align-items:center; flex-wrap:wrap;}
+.answer-vote-btn{padding:6px 10px; border:1px solid var(--border); border-radius:8px; background:var(--surface2); color:var(--muted); font-size:12px; font-weight:600; cursor:pointer; transition:all .15s;}
+.answer-vote-btn:hover{border-color:var(--border2); color:var(--text);}
+.answer-vote-btn.voted{border-color:var(--violet); color:var(--violet2); background:rgba(139,92,246,.10);}
+
 
 /* Chat */
 .chatwin{display:flex; flex-direction:column; height:560px; border:1px solid var(--border); border-radius:16px; overflow:hidden; background:var(--surface);}
@@ -773,7 +786,9 @@ const state = {
   redemptions: [],     // admin view
   adminStores: null,
   adminSubs: null,
-  adminTx: null
+  adminTx: null,
+  answerHelpfulVotes: {},
+  answerNotHelpfulVotes: {}
 };
 /* Admin-configurable platform rules — wired into real logic below, not just displayed */
 const ADMIN_CONFIG = {
@@ -1621,21 +1636,81 @@ async function acceptAnswer(doubtId, ansId){
 }
 window.acceptAnswer = acceptAnswer;
 
-async function markNotHelpful(doubtId, ansId){
+async function saveAnswerVote(ansId, field, value){
+  if(!usingRealBackend) return true;
+  const { error } = await sb.from("doubt_answers").update({ [field]: value }).eq("id", ansId);
+  if(error){
+    console.error("Answer vote update failed:", error);
+    toast("Couldn't save your vote: "+error.message);
+    return false;
+  }
+  return true;
+}
+
+async function markHelpful(doubtId, ansId){
+  if(!state.user) return nav("login");
   const d = DOUBTS.find(x=>x.id===doubtId);
-  const a = d.answers.find(x=>x.id===ansId);
-  if(a.flaggedBy===state.user.id) return toast("You already flagged this answer.");
-  a.notHelpful = (a.notHelpful||0)+1;
-  a.flaggedBy = state.user.id;
+  const a = d?.answers.find(x=>x.id===ansId);
+  if(!a) return toast("Answer not found.");
+
+  const alreadyHelpful = !!state.answerHelpfulVotes[ansId];
+  const alreadyNotHelpful = !!state.answerNotHelpfulVotes[ansId];
+
+  if(alreadyHelpful) return toast("You already marked this answer as helpful.");
+
+  const nextHelpful = (a.helpful||0) + 1;
+  let nextNotHelpful = a.notHelpful||0;
+
+  if(alreadyNotHelpful) nextNotHelpful = Math.max(0, nextNotHelpful - 1);
+
   if(usingRealBackend){
-    await sb.from("doubt_answers").update({ not_helpful: a.notHelpful }).eq("id", ansId);
+    const ok = await saveAnswerVote(ansId, "helpful", nextHelpful);
+    if(!ok) return;
+    if(alreadyNotHelpful){
+      const ok2 = await saveAnswerVote(ansId, "not_helpful", nextNotHelpful);
+      if(!ok2) return;
+    }
   }
-  if(a.authorId===state.user.id){
-    state.user.reputation = Math.max(0, state.user.reputation - ADMIN_CONFIG.notHelpfulPenalty);
-    notify("Reputation lowered", "An answer of yours was marked unhelpful (-"+ADMIN_CONFIG.notHelpfulPenalty+" reputation).");
-  } else {
-    toast("Marked as not helpful. Thanks for keeping quality high.");
+
+  a.helpful = nextHelpful;
+  a.notHelpful = nextNotHelpful;
+  state.answerHelpfulVotes[ansId] = true;
+  delete state.answerNotHelpfulVotes[ansId];
+  toast("Marked as helpful.");
+  render();
+}
+window.markHelpful = markHelpful;
+
+async function markNotHelpful(doubtId, ansId){
+  if(!state.user) return nav("login");
+  const d = DOUBTS.find(x=>x.id===doubtId);
+  const a = d?.answers.find(x=>x.id===ansId);
+  if(!a) return toast("Answer not found.");
+
+  const alreadyHelpful = !!state.answerHelpfulVotes[ansId];
+  const alreadyNotHelpful = !!state.answerNotHelpfulVotes[ansId];
+
+  if(alreadyNotHelpful) return toast("You already marked this answer as not helpful.");
+
+  const nextNotHelpful = (a.notHelpful||0) + 1;
+  let nextHelpful = a.helpful||0;
+
+  if(alreadyHelpful) nextHelpful = Math.max(0, nextHelpful - 1);
+
+  if(usingRealBackend){
+    const ok = await saveAnswerVote(ansId, "not_helpful", nextNotHelpful);
+    if(!ok) return;
+    if(alreadyHelpful){
+      const ok2 = await saveAnswerVote(ansId, "helpful", nextHelpful);
+      if(!ok2) return;
+    }
   }
+
+  a.notHelpful = nextNotHelpful;
+  a.helpful = nextHelpful;
+  state.answerNotHelpfulVotes[ansId] = true;
+  delete state.answerHelpfulVotes[ansId];
+  toast("Marked as not helpful.");
   render();
 }
 window.markNotHelpful = markNotHelpful;
@@ -2356,10 +2431,10 @@ function viewDoubtDetail(id){
         <div class="small muted">${timeAgo(a.createdAt)}</div>
       </div>
       <p style="font-size:14px; margin-top:6px; line-height:1.55;">${a.body}</p>
-      <div style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap;">
-        <span class="small muted">👍 ${a.helpful} helpful${a.notHelpful?` · 👎 ${a.notHelpful} not helpful`:""}</span>
+      <div class="answer-vote-row">
+        <button class="answer-vote-btn ${state.answerHelpfulVotes[a.id]?"voted":""}" onclick="markHelpful('${d.id}','${a.id}')">👍 Helpful (${a.helpful||0})</button>
+        <button class="answer-vote-btn ${state.answerNotHelpfulVotes[a.id]?"voted":""}" onclick="markNotHelpful('${d.id}','${a.id}')">👎 Not helpful (${a.notHelpful||0})</button>
         ${u && u.id===d.authorId && !a.accepted ? `<button class="btn btn-outline btn-sm" onclick="acceptAnswer('${d.id}','${a.id}')">Mark as accepted</button>` : ""}
-        ${u && u.id!==a.authorId ? `<button class="btn btn-ghost btn-sm" onclick="markNotHelpful('${d.id}','${a.id}')">👎 Not helpful</button>` : ""}
       </div>
     </div>`).join("") || `<p class="muted small">No answers yet — be the first to help!</p>`}
     ${u? `<div class="card" style="margin-top:18px;">
